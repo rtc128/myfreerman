@@ -1,0 +1,73 @@
+.\" Manpage for mytjrsrman.
+
+.TH man 1 "mytjrsrman man page"
+
+.SH NAME
+
+mytjrsrman \- administer mysql backups
+
+.SH SYNOPSIS
+
+mytjrsrman [ -c <config> ] [ -b ] [ -y ] <command> [ <command options and arguments ...> ]
+
+.B commands
+
+backup full | binlog
+
+list full | binlog
+
+restore [ -n ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <database> [ -x <database> ] | [ -t <database1.table1> [ -t <database2.table2> [ ... ] ] ] ]
+
+.SH DESCRIPTION
+
+This is a tool that wraps MySQL Enterprise Backup to handle backups of MySQL databases.
+
+It adds support for:
+
+- Listing full and binlog bakcups
+
+- Compressing binlog backups
+
+- Restoring only a schema / only a list of tables
+
+- Automated PITR
+
+- Recovery window maintenance
+
+.SH OPTIONS
+
+-c Use another configuration file, and not the default /etc/mytjrsrman.conf.
+
+-b Instead printing output to standard output, print to log file.
+
+-y Assume YES to confirmations.
+
+.B backup
+
+Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
+
+.B list
+
+List current backups. List \fBfull\fR or \fBbinlog\fR backups.
+
+.B restore
+
+Restore a previously created backup.
+
+	-n Do not create a new database incarnation. This is used to restore backups in different environments, such restoring production backups in test servers.
+
+	-p Restore using a specific point in time.
+
+	-d Restore only a specific schema. Cannot be used with -t.
+
+	-x Restore only a specific schema, but with a new name. Requires -d.
+
+	-t Restore only specific table(s). Cannot be used with -d.
+
+.SH SEE ALSO
+
+mytjrsrman.conf(8)
+
+.SH AUTHOR
+
+Rodrigo Cardoso <rodrigocardoso@tjrs.jus.br>

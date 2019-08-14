@@ -1,0 +1,61 @@
+.\" Manpage for mytjrsrman.
+
+.TH man 1 "mytjrsrman.conf man page"
+
+.SH NAME
+
+mytjrsrman.conf \- mytjrsrman config file
+
+.SH DESCRIPTION
+
+AUX_BASEDIR: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
+
+DB_PASSWORD: Database password - optional - mysql_config_editor can be used.
+
+DB_USERNAME: Database username - optional - mysql_config_editor can be used.
+
+LOG_DIR: Log directory. Required when option -b is used.
+
+LOCK_FILE: Lock file path. Lock file is used to block simultaneous instances running.
+
+MYSQL_CONF_FILE: Path to MySQL config file - default: /etc/my.cnf.
+
+MYSQL_SERVICE_NAME: MySQL Server service name, for installations that use Linux services - SysV/Systemd. Leave empty if you use Oracle Clusterware.
+
+READ_THREADS: Number of threads for reading tasks. Default: 1. Max: 20.
+
+RETENTION_PERIOD: Backup retention period (days).
+
+WRITE_THREADS: Number of threads for writing tasks. Default: 1. Max: 20.
+
+XAG_INSTANCE_NAME: MySQL instance name registered in XAG (Oracle Clusterware). Leave empty if your installation do not use Clusterware.
+
+.SH EXAMPLE
+
+AUX_BASEDIR=/mnt/backup/mysqldb1
+
+#DB_PASSWORD= #none, use mysql_config_editor
+
+#DB_USERNAME= #none, use mysql_config_editor
+
+LOG_DIR=/var/log/mytjrsrman
+
+LOCK_FILE=/var/lib/mytjrsrman.lock
+
+#MYSQL_CONF_FILE= #Use the default path
+
+#MYSQL_SERVICE_NAME= #Use XAG
+
+RETENTION_PERIOD=20
+
+XAG_INSTANCE_NAME=mysqldb1
+
+READ_THREADS=5
+
+WRITE_THREADS=5
+
+.SH SEE ALSO
+mytjrsrman(1)
+
+.SH AUTHOR
+Rodrigo Cardoso <rodrigocardoso@tjrs.jus.br>
