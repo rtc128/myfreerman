@@ -33,5 +33,5 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/mytjrsrman.conf.8.gz
 
 %changelog
-* Aug 14 2019 Rodrigo Tassinari 1.2.4
+* Tue Aug 14 2019 Rodrigo Tassinari 1.2.4
   - Minor fixes in manpages
