@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.7
+RELEASE=1.2.8
 
 function binlog_backup_exists()
 {
