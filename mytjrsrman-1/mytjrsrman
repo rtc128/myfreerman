@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=2019-08-09
+RELEASE=1.2.7
 
 function binlog_backup_exists()
 {
@@ -40,6 +40,19 @@ function check_aux_dir_space()
 	fi
 }
 
+function check_backup_consistency()
+{
+	write_out "Checking backup consistency"
+	cd "$BASE_BACKUP_DIR" || return 1
+	for BKP in `ls`; do
+		if [ -d "$BKP" ]; then
+			if ! consistent_backup "$BKP"; then
+				rm -r "$BKP"
+			fi
+		fi
+	done
+}
+
 function check_config()
 {
 	if [ $READ_THREADS -lt 1 -o $READ_THREADS -gt $MAX_READ_THREADS ]; then
@@ -54,14 +67,9 @@ function check_config()
 
 function check_depends()
 {
-	TS=`date +"%H:%M:%S"`
 	#crudini
 	if ! rpm -q crudini >/dev/null 2>&1; then
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Cannot find package 'crudini'"
-		else
-			echo "[$TS] Cannot find package 'crudini'" >>"$LOG_FILE"
-		fi
+		write_out "Cannot find package 'crudini'"
 		return 1
 	fi
 }
@@ -91,20 +99,11 @@ function check_lock_file()
 
 	if [ -n "$LOCK_FILE" ]; then
 		while [ -f "$LOCK_FILE" ]; do
-			TS=`date +"%H:%M:%S"` || return 1
 			if [ $TOT_WAIT_TIME -ge $MAX_WAIT_TIME_SEC ]; then
-				if [ $BG_MODE -eq 0 ]; then
-					echo "[$TS] Timeout reached waiting for another instance"
-				else
-					echo "[$TS] Timeout reached waiting for another instance" >>"$LOG_FILE"
-				fi
+				write_out "Timeout reached waiting for another instance"
 				return 1
 			fi
-			if [ $BG_MODE -eq 0 ]; then
-				echo "[$TS] Waiting for another instance - lock file: $LOCK_FILE..."
-			else
-				echo "[$TS] Waiting for another instance - lock file: $LOCK_FILE..." >>"$LOG_FILE"
-			fi
+			write_out "Waiting for another instance - lock file: $LOCK_FILE"
 			sleep $SLEEP_TIME
 			TOT_WAIT_TIME=`expr $TOT_WAIT_TIME + $SLEEP_TIME`
 		done
@@ -138,9 +137,9 @@ function compress_all_backups()
 	LIST=`find . -mindepth 1 -maxdepth 1 -type d | sort | sed -e 's/\.\///'`
 	for BKP in $LIST; do
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Compressing backup ${BKP}..."
+			echo "[$TS] Compressing backup ${BKP}"
 		else
-			echo "[$TS] Compressing backup ${BKP}..." >>"$LOG_FILE"
+			echo "[$TS] Compressing backup ${BKP}" >>"$LOG_FILE"
 		fi
 		TAR_FILE="${BKP}.tgz"
 		if ! [ -f "$TAR_FILE" ]; then
@@ -164,25 +163,30 @@ function confirm_operation()
 	return 1
 }
 
+function consistent_backup()
+{
+	BKP_TS="$1"
+	TMP_BKP_DIR="$1"
+	TMP_BACKUP_VARS="$TMP_BKP_DIR/meta/backup_variables.txt"
+	if ! [ -f "$TMP_BACKUP_VARS" ]; then
+		return 1
+	fi
+	TMP_APPLY_LOG_DONE="`crudini --get \"$TMP_BACKUP_VARS\" backup_variables apply_log_done`" || return 1
+	if [ "$TMP_APPLY_LOG_DONE" != "1" ]; then
+		return 1
+	fi
+	return 0
+}
+
 function copy_recovered_db()
 {
 	CRED_OPT=`mount_target_credentials_opt`
 	if [ -z "$RESTORE_DB_NEW_NAME" ]; then
 		RESTORE_DB_NEW_NAME=$RESTORE_DB_OLD_NAME
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Dropping target database '$RESTORE_DB_NEW_NAME'"
-		else
-			echo "[$TS] Dropping target database '$RESTORE_DB_NEW_NAME'" >>"$LOG_FILE"
-		fi
+		write_out "Dropping target database '$RESTORE_DB_NEW_NAME'"
 		mysql $CRED_OPT -e "drop database if exists $RESTORE_DB_NEW_NAME;" || return 1
 	fi
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Copying recovered database from aux instance... "
-	else
-		echo "[$TS] Copying recovered database from aux instance... " >>"$LOG_FILE"
-	fi
+	write_out "Copying recovered database from aux instance"
 	mysql $CRED_OPT -e "create database $RESTORE_DB_NEW_NAME;" >/dev/null || return 1
 	mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $RESTORE_DB_OLD_NAME | mysql $CRED_OPT $RESTORE_DB_NEW_NAME
 	stop_aux_instance
@@ -191,12 +195,7 @@ function copy_recovered_db()
 function copy_restored_tables()
 {
 	CRED_OPT=`mount_target_credentials_opt`
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Copying restored tables from aux instance... "
-	else
-		echo "[$TS] Copying restored tables from aux instance... " >>"$LOG_FILE"
-	fi
+	write_out "Copying restored tables from aux instance"
 	for QT in $RESTORE_TABLE_LIST; do
 		if ! echo "$QT" | grep \\. >/dev/null; then
 			echo "Invalid table name: '$QT' - table names must be qualified with schema" >&2
@@ -205,9 +204,9 @@ function copy_restored_tables()
 		SCHEMA=`echo $QT | cut -d . -f 1`
 		TABLE=`echo $QT | cut -d . -f 2`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS]    ${QT}... "
+			echo "[$TS]    ${QT}"
 		else
-			echo "[$TS]    ${QT}... " >>"$LOG_FILE"
+			echo "[$TS]    ${QT}" >>"$LOG_FILE"
 		fi
 		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $SCHEMA $TABLE | mysql $CRED_OPT $SCHEMA
 	done
@@ -258,18 +257,14 @@ function create_aux_config()
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
 }
+
 function create_incarnation()
 {
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Creating new backup incarnation... "
-	else
-		echo "[$TS] Creating new backup incarnation... " >>"$LOG_FILE"
-	fi
+	write_out "Creating new backup incarnation"
 	MOMENT=$1
 	RESTORE_DIR=$RESTORE_BACKUP_DIR/$MOMENT
-	mkdir -p $RESTORE_DIR || return 1
-	mv $BACKUP_DIR/base $BACKUP_DIR/binlog $RESTORE_DIR || return 1
+	mkdir -p "$RESTORE_DIR" || return 1
+	mv "$BACKUP_DIR/base" "$BACKUP_DIR/binlog" "$RESTORE_DIR" || return 1
 }
 
 function exist_base_backup()
@@ -332,9 +327,9 @@ function fix_backup_timestamp()
 	BACKUP=$1
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Fixing backup $BACKUP timestamp... "
+		echo "[$TS] Fixing backup $BACKUP timestamp"
 	else
-		echo "[$TS] Fixing backup $BACKUP timestamp... " >>"$LOG_FILE"
+		echo "[$TS] Fixing backup $BACKUP timestamp " >>"$LOG_FILE"
 	fi
 	cd $BASE_BACKUP_DIR || return 1
 	LOGSEQ=`get_base_backup_binlog_sequence $BACKUP` || return 1
@@ -473,6 +468,7 @@ function get_mysql_version()
 
 function get_oldest_full_backup()
 {
+	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	ls | head -n 1
@@ -536,7 +532,7 @@ function mount_credentials_opt()
 	fi
 	if [ -n "$DB_PASSWORD" ]; then
 		if [ -n "$RESULT" ]; then
-			RESULT="$RESULT "
+			RESULT="$RESULT"
 		fi
 		RESULT="${RESULT}--password=$DB_PASSWORD"
 	fi
@@ -576,9 +572,9 @@ function mysql_start_aux()
 	START_TIMEOUT=120
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting aux instance... "
+		echo "[$TS] Starting aux instance"
 	else
-		echo "[$TS] Starting aux instance... " >>"$LOG_FILE"
+		echo "[$TS] Starting aux instance " >>"$LOG_FILE"
 	fi
 	CMD="mysqld --defaults-file=$AUX_CONFIG"
 	$CMD &
@@ -611,9 +607,9 @@ function mysql_start_target()
 {
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting MySQL... "
+		echo "[$TS] Starting MySQL "
 	else
-		echo "[$TS] Starting MySQL... " >>"$LOG_FILE"
+		echo "[$TS] Starting MySQL " >>"$LOG_FILE"
 	fi
 	if [ -n "$XAG_INSTANCE_NAME" ]; then
 		agctl start mysql_server $XAG_INSTANCE_NAME || return 1
@@ -631,9 +627,9 @@ function mysql_stop()
 {
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Stopping MySQL... "
+		echo "[$TS] Stopping MySQL "
 	else
-		echo "[$TS] Stopping MySQL... " >>"$LOG_FILE"
+		echo "[$TS] Stopping MySQL " >>"$LOG_FILE"
 	fi
 	if [ -n "$XAG_INSTANCE_NAME" ]; then
 		agctl stop mysql_server $XAG_INSTANCE_NAME
@@ -657,9 +653,9 @@ function port_available()
 
 function purge_binlogs()
 {
-	LAST_LOG=$1
+	LIMIT_LOG=$1
 	CRED_OPT=`mount_credentials_opt` || return 1
-	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "purge binary logs to '$LAST_LOG';" >/dev/null || return 1
+	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
 }
 
 function query()
@@ -699,7 +695,7 @@ function query_binlog_backup_age()
 
 function query_full_backup_age()
 {
-	cd $BASE_BACKUP_DIR || return 1
+	cd "$BASE_BACKUP_DIR" || return 1
 	BKP=`ls | tail -n 1`
 	DATE=${BKP:0:10}
 	TIME=${BKP:11:8}
@@ -754,9 +750,9 @@ function recover()
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Reading binary log $LOGSEQ... "
+		echo "[$TS] Reading binary log $LOGSEQ "
 	else
-		echo "[$TS] Reading binary log $LOGSEQ... " >>"$LOG_FILE"
+		echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
 	fi
 	read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB || return 1
 	LOGSEQ=`expr $LOGSEQ + 1`
@@ -764,9 +760,9 @@ function recover()
 	while binlog_backup_exists $LOGSEQ; do
 		TS=`date +"%H:%M:%S"`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Reading binary log $LOGSEQ... "
+			echo "[$TS] Reading binary log $LOGSEQ "
 		else
-			echo "[$TS] Reading binary log $LOGSEQ... " >>"$LOG_FILE"
+			echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
 		fi
 		LOG_TIMESTAMP=`get_binlog_timestamp $LOGSEQ` || return 1
 		if [ $LOG_TIMESTAMP -gt $COMP_REQ_TIMESTAMP ]; then
@@ -779,9 +775,9 @@ function recover()
 	mysql_start || (rm $TMP_SQL; return 1)
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Applying binary logs..."
+		echo "[$TS] Applying binary logs"
 	else
-		echo "[$TS] Applying binary logs..." >>"$LOG_FILE"
+		echo "[$TS] Applying binary logs" >>"$LOG_FILE"
 	fi
 	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT $AUX_SOCKET_OPT <$TMP_SQL
 	rm $TMP_SQL
@@ -808,9 +804,9 @@ function remove_old_binlog_backups()
 	for BINLOG in $LIST; do
 		TS=`date +"%H:%M:%S"`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ..."
+			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ"
 		else
-			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ..." >>"$LOG_FILE"
+			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ" >>"$LOG_FILE"
 		fi
 		BINLOG=`basename $BINLOG`
 		rm -f $BINLOG || return 1
@@ -822,7 +818,8 @@ function remove_old_binlog_backups()
 function remove_old_full_backups()
 {
 	REF_TIMESTAMP=`date --date="-$RETENTION_PERIOD days" +%Y%m%d%H%M%S`
-	mkdir -p $BASE_BACKUP_DIR || return 1
+	cd "$BACKUP_DIR" || return 1
+	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	COUNT=`ls |wc -l`
 	if [ $COUNT -eq 0 ]; then
@@ -887,30 +884,27 @@ function restore()
 		esac
 	done
 	restore_validate_options || return 1
-	if ! [ -d "$BASE_BACKUP_DIR" ]; then
-		echo "Cannot find directory that stores base backups ('$BASE_BACKUP_DIR'). Please check https://www.tjrs.gov.br/sistemas/redmine/projects/producao/wiki/DBAs_mytjrsrman for details." >&2
-		return 1
-	fi
-	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
-		echo "Cannot find directory that stores binlog backups ('$BINLOG_BACKUP_DIR'). Please check https://www.tjrs.gov.br/sistemas/redmine/projects/producao/wiki/DBAs_mytjrsrman for details." >&2
-		return 1
-	fi
+	cd "$BACKUP_DIR" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 	fi
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting restore..."
+		echo "[$TS] Starting restore"
 	else
-		echo "[$TS] Starting restore..." >>"$LOG_FILE"
+		echo "[$TS] Starting restore" >>"$LOG_FILE"
 	fi
 	MYSQL_SERVICE=`find_mysql_service` || return 1
 	DB_COPY=0
 	MOMENT=`date +%Y%m%d-%H%M%S`
 	AUX_SOCKET_OPT=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
-	cd $BASE_BACKUP_DIR || return 1
+	cd "$BASE_BACKUP_DIR" || return 1
 	DIR=`ls | tail -n 1 | cut -d . -f 1`
+	if [ -z "$DIR" ]; then
+		echo "No backup to be restored" >&2
+		return 1
+	fi
 	BACKUP_DB_CONFIG_FILE=/tmp/my.cnf
 	#uncompress_backup "$DIR" || return 1
 	cp $BASE_BACKUP_DIR/${DIR}/server-my.cnf $BACKUP_DB_CONFIG_FILE || return 1
@@ -927,6 +921,8 @@ function restore()
 		return 1
 	fi
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
+		cd "$AUX_BASEDIR" || return 1
+		cd -
 		check_aux_binaries || return 1
 		check_aux_dir_space $DIR || return 1
 		if [ -z "$AUX_BASEDIR" ]; then
@@ -949,6 +945,13 @@ function restore()
 		AUX_BIND_ADDRESS=127.0.0.1
 		AUX_PORT=`find_aux_port` || return 1
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
+	else
+#onyl root
+		CUR_USER=`whoami` || return 1
+		if [ "$CUR_USER" != "root" ]; then
+			echo "User must be root" >&2
+			return 1
+		fi
 	fi
 	check_new_db_name || return 1
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
@@ -974,9 +977,9 @@ function restore()
 		create_incarnation $MOMENT
 		TS=`date +"%H:%M:%S"`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Resetting binary logs..."
+			echo "[$TS] Resetting binary logs"
 		else
-			echo "[$TS] Resetting binary logs..." >>"$LOG_FILE"
+			echo "[$TS] Resetting binary logs" >>"$LOG_FILE"
 		fi
 		reset_master || return 1
 	fi
@@ -1000,7 +1003,7 @@ function restore_aux_instance()
 {
 	DIR=$1
 	create_aux_config $DIR || return 1
-	rm -fr $AUX_DATADIR/* || return 1
+	rm -fr "$AUX_DATADIR/*" || return 1
 	mkdir -p $AUX_DATADIR || return 1
 
 	if [ $BG_MODE -eq 0 ]; then
@@ -1107,9 +1110,8 @@ function validate_config()
 function backup()
 {
 	if [ $BG_MODE -eq 1 ]; then
-		if ! killall -0 mysqld 2>/dev/null; then
-			TS=`date +"%H:%M:%S"`
-			echo "[$TS] No mysql server running - ignoring backup" >>"$LOG_FILE"
+		if ! mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1; then
+			write_out "No MySQL server running - ignoring backup" >>"$LOG_FILE"
 			return
 		fi
 	fi
@@ -1145,13 +1147,15 @@ function backup()
 
 function backup_binlog()
 {
+	cd "$BACKUP_DIR" || return 1
 	if ! exist_base_backup; then
 		echo "No full backup was previously done" >&2
 		return 1
 	fi
 	CRED_OPT=`mount_target_credentials_opt`
-	mkdir -p $BINLOG_BACKUP_DIR || return 1
-	cd $BINLOG_WRITE_DIR || return 1
+	cd "$BACKUP_DIR" || return 1
+	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
+	cd "$BINLOG_WRITE_DIR" || return 1
 	#flush logs before starting backup
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
 	#get most recent log
@@ -1165,26 +1169,30 @@ function backup_binlog()
 		LOGSEQ=`expr $LOGSEQ + 0`
 		TS=`date +"%H:%M:%S"`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Saving binary log sequence $LOGSEQ..."
+			echo "[$TS] Saving binary log sequence $LOGSEQ"
 		else
-			echo "[$TS] Saving binary log sequence $LOGSEQ..." >>"$LOG_FILE"
+			echo "[$TS] Saving binary log sequence $LOGSEQ" >>"$LOG_FILE"
 		fi
+		NEXTSEQ=`expr $LOGSEQ + 1`
+		LONG_NEXTSEQ=`seq -f "%06g" $NEXTSEQ $NEXTSEQ`
+		NEXTLOG=binlog.${LONG_NEXTSEQ}
 		gzip -c9 $F >$BINLOG_BACKUP_DIR/$F.gz || return 1
+		purge_binlogs $NEXTLOG || return 1
 	done
-	purge_binlogs $LAST_LOG || return 1
 	remove_old_backups || return 1
 }
 
 function backup_full()
 {
 	CRED_OPT=`mount_credentials_opt` || return 1
-	mkdir -p $BASE_BACKUP_DIR || return 1
+	cd "$BACKUP_DIR" || return 1
+	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	BUFFER=`mktemp /tmp/backup.log.XXXXXX` || return 1
 	DATE_VAL=`date +%Y-%m-%d`
 	TIME_VAL=`date +%H-%M-%S`
 	TIMESTAMP=${DATE_VAL}_${TIME_VAL}
 	DIRECTORY="${BASE_BACKUP_DIR}/${TIMESTAMP}"
-	mkdir "$DIRECTORY" || return 1
+	mkdir -p "$DIRECTORY" || return 1
 	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
 	if [ $BG_MODE -eq 0 ]; then
 		TS=`date +"%H:%M:%S"`
@@ -1232,9 +1240,7 @@ function backup_full()
 function run()
 {
 	validate_config || return 1
-	if [ $BG_MODE -eq 1 ]; then
-		mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1 || return
-	fi
+	check_backup_consistency || return 1
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
 	USE_AUX_INSTANCE=0
@@ -1282,9 +1288,9 @@ function stop_aux_instance()
 	STOP_TIMEOUT=30
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Stopping aux instance... "
+		echo "[$TS] Stopping aux instance"
 	else
-		echo "[$TS] Stopping aux instance... " >>"$LOG_FILE"
+		echo "[$TS] Stopping aux instance" >>"$LOG_FILE"
 	fi
 	kill `cat $AUX_PID_FILE` || return 1
 	sleep 3
@@ -1312,7 +1318,18 @@ function uncompress_backup()
 function version()
 {
 	echo "MyTJRSRman - TJRS Backup Utility for MySQL - Release $RELEASE"
-	echo "Documentation at https://www.tjrs.gov.br/sistemas/redmine/projects/producao/wiki/DBAs_mytjrsrman"
+	echo "Manual: man mytjrsrman"
+}
+
+function write_out()
+{
+	MSG="$1"
+	TS=`date +"%H:%M:%S"`
+	if [ $BG_MODE -eq 0 ]; then
+		echo "[$$ $TS] $MSG"
+	else
+		echo "[$$ $TS] $MSG" >>"$LOG_FILE"
+	fi
 }
 
 if [ "$DEBUG" == "1" ]; then

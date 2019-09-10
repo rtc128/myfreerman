@@ -1,6 +1,6 @@
 Name:           mytjrsrman
 Version:        1
-Release:        1.2.4
+Release:        1.2.7
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -33,5 +33,12 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/mytjrsrman.conf.8.gz
 
 %changelog
+* Mon Sep 02 2019 Rodrigo Tassinari 1.2.6
+	- Purge each binlog just after backing it up, and not the whole list together at the end of the process
+
+* Thu Aug 22 2019 Rodrigo Tassinari 1.2.5
+	- Required that backup directory alread exists.
+	- Required that aux database directory alread exists, when needed for restore.
+
 * Tue Aug 14 2019 Rodrigo Tassinari 1.2.4
   - Minor fixes in manpages
