@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.8
+RELEASE=1.2.9
 
 function binlog_backup_exists()
 {
@@ -42,8 +42,9 @@ function check_aux_dir_space()
 
 function check_backup_consistency()
 {
+	check_lock_file || return 1
 	write_out "Checking backup consistency"
-	cd "$BASE_BACKUP_DIR" || return 1
+	cd "$BASE_BACKUP_DIR" || (remove_lock_file && return 1)
 	for BKP in `ls`; do
 		if [ -d "$BKP" ]; then
 			if ! consistent_backup "$BKP"; then
@@ -51,6 +52,7 @@ function check_backup_consistency()
 			fi
 		fi
 	done
+	remove_lock_file
 }
 
 function check_config()
@@ -325,12 +327,7 @@ function find_base_backup()
 function fix_backup_timestamp()
 {
 	BACKUP=$1
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Fixing backup $BACKUP timestamp"
-	else
-		echo "[$TS] Fixing backup $BACKUP timestamp " >>"$LOG_FILE"
-	fi
+	write_out "Fixing backup $BACKUP timestamp"
 	cd $BASE_BACKUP_DIR || return 1
 	LOGSEQ=`get_base_backup_binlog_sequence $BACKUP` || return 1
 	POSITION=`get_base_backup_binlog_position $BACKUP` || return 1
@@ -570,12 +567,7 @@ function mysql_start()
 function mysql_start_aux()
 {
 	START_TIMEOUT=120
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting aux instance"
-	else
-		echo "[$TS] Starting aux instance " >>"$LOG_FILE"
-	fi
+	write_out "Starting aux instance"
 	CMD="mysqld --defaults-file=$AUX_CONFIG"
 	$CMD &
 	sleep 3
@@ -605,12 +597,7 @@ function mysql_start_aux()
 
 function mysql_start_target()
 {
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting MySQL "
-	else
-		echo "[$TS] Starting MySQL " >>"$LOG_FILE"
-	fi
+	write_out "Starting MySQL"
 	if [ -n "$XAG_INSTANCE_NAME" ]; then
 		agctl start mysql_server $XAG_INSTANCE_NAME || return 1
 		sleep 2
@@ -627,7 +614,7 @@ function mysql_stop()
 {
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Stopping MySQL "
+		echo "[$TS] Stopping MySQL"
 	else
 		echo "[$TS] Stopping MySQL " >>"$LOG_FILE"
 	fi
@@ -750,7 +737,7 @@ function recover()
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
 	TS=`date +"%H:%M:%S"`
 	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Reading binary log $LOGSEQ "
+		echo "[$TS] Reading binary log $LOGSEQ"
 	else
 		echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
 	fi
@@ -760,7 +747,7 @@ function recover()
 	while binlog_backup_exists $LOGSEQ; do
 		TS=`date +"%H:%M:%S"`
 		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Reading binary log $LOGSEQ "
+			echo "[$TS] Reading binary log $LOGSEQ"
 		else
 			echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
 		fi
@@ -802,12 +789,7 @@ function remove_old_binlog_backups()
 	OLDEST_BKP=`ls ${BASE_BACKUP_DIR} | head -n 1`
 	LIST=`find . \! -newer "${BASE_BACKUP_DIR}/${OLDEST_BKP}"` || return 1
 	for BINLOG in $LIST; do
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ"
-		else
-			echo "[$TS] Removing expired backup of binary log sequence $LOGSEQ" >>"$LOG_FILE"
-		fi
+		write_out "Removing expired backup of binary log sequence $LOGSEQ"
 		BINLOG=`basename $BINLOG`
 		rm -f $BINLOG || return 1
 		BINLOG=`echo $BINLOG | cut -d . -f 2`
@@ -836,12 +818,7 @@ function remove_old_full_backups()
 			return
 		fi
 		if [ -n "$PREV_BKP" ]; then
-			TS=`date +"%H:%M:%S"`
-			if [ $BG_MODE -eq 0 ]; then
-				echo "[$TS] Removing expired full backup $PREV_BKP"
-			else
-				echo "[$TS] Removing expired full backup $PREV_BKP" >>"$LOG_FILE"
-			fi
+			write_out "Removing expired full backup $PREV_BKP"
 			rm -fr $PREV_BKP || return 1
 			PREV_BKP=`echo $PREV_BKP | cut -d . -f 1`
 		fi
@@ -991,12 +968,7 @@ function restore()
 			echo "[$TS] Database is read-only for regular users (root can write). After validating restoration, you must edit '$MYSQL_CONF_FILE', remove variable [mysqld]:read_only, and then run 'set global read_only=0;' in MySQL." >>"$LOG_FILE"
 		fi
 	fi
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Finished"
-	else
-		echo "[$TS] Finished" >>"$LOG_FILE"
-	fi
+	write_out "Finished"
 }
 
 function restore_aux_instance()
@@ -1007,9 +979,9 @@ function restore_aux_instance()
 	mkdir -p $AUX_DATADIR || return 1
 
 	if [ $BG_MODE -eq 0 ]; then
-		echo "===== STARTING mysqlbackup ===== "
+		echo "===== STARTING mysqlbackup ====="
 		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back || return 1
-		echo "===== FINISHED mysqlbackup ===== "
+		echo "===== FINISHED mysqlbackup ====="
 	else
 		TS=`date +"%H:%M:%S"`
 		echo "[$TS] ===== STARTING mysqlbackup ===== " >>"$LOG_FILE"
@@ -1043,10 +1015,10 @@ function restore_target_instance()
 	CONFIG_FILE=$DIR/server-my.cnf
 	if [ $BG_MODE -eq 0 ]; then
 		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ===== "
+		echo "[$TS] ===== STARTING mysqlbackup ====="
 		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back || return 1 
 		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== FINISHED mysqlbackup ===== "
+		echo "[$TS] ===== FINISHED mysqlbackup ====="
 	else
 		TS=`date +"%H:%M:%S"`
 		echo "[$TS] ===== STARTING mysqlbackup ===== " >>"$LOG_FILE"
@@ -1167,12 +1139,7 @@ function backup_binlog()
 		fi
 		LOGSEQ=`echo $F | cut -d . -f 2`
 		LOGSEQ=`expr $LOGSEQ + 0`
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Saving binary log sequence $LOGSEQ"
-		else
-			echo "[$TS] Saving binary log sequence $LOGSEQ" >>"$LOG_FILE"
-		fi
+		write_out "Saving binary log sequence $LOGSEQ"
 		NEXTSEQ=`expr $LOGSEQ + 1`
 		LONG_NEXTSEQ=`seq -f "%06g" $NEXTSEQ $NEXTSEQ`
 		NEXTLOG=binlog.${LONG_NEXTSEQ}
@@ -1195,23 +1162,18 @@ function backup_full()
 	mkdir -p "$DIRECTORY" || return 1
 	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
 	if [ $BG_MODE -eq 0 ]; then
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ===== "
+		write_out "===== STARTING mysqlbackup ====="
 		if ! mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | tee $BUFFER; then
+			cat $BUFFER
 			rm $BUFFER
 			return 1
 		fi
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== FINISHED mysqlbackup ===== "
+		echo "[$TS] ===== FINISHED mysqlbackup ====="
 	else
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ===== " >"$BUFFER"
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$BUFFER" 2>&1 || return 1
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== FINISHED mysqlbackup ===== " >>"$BUFFER"
+		write_out "===== STARTING mysqlbackup ====="
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$BUFFER" 2>&1 || (cat "$BUFFER" >>"$LOG_FILE" && return 1)
+		write_out "===== FINISHED mysqlbackup ====="
 	fi
-	TS=`date +"%H:%M:%S"`
-
 	if [ $BG_MODE -eq 1 ]; then
 		cat $BUFFER >>"$LOG_FILE"
 	fi
