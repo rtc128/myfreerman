@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.10
+RELEASE=1.2.11
 
 function binlog_backup_exists()
 {
@@ -1120,27 +1120,21 @@ function backup_binlog()
 		return 1
 	fi
 	CRED_OPT=`mount_target_credentials_opt`
+	BINLOG_INDEX="`mysql $CRED_OPT -e \"select @@log_bin_index\" | column -t | tail -n 1`" || return 1
 	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
 	cd "$BINLOG_WRITE_DIR" || return 1
-	#flush logs before starting backup
-	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
-	#get most recent log
-	LAST_LOG=`ls -I binlog.index binlog.* | grep -vw binlog.index | tail -n 1`
-	for F in binlog.*; do
-		#ignore log index and last log
-		if [ "$F" == "binlog.index" -o "$F" == "$LAST_LOG" ]; then
-			continue
-		fi
-		LOGSEQ=`echo $F | cut -d . -f 2`
-		LOGSEQ=`expr $LOGSEQ + 0`
-		write_out "Saving binary log sequence $LOGSEQ"
-		NEXTSEQ=`expr $LOGSEQ + 1`
-		LONG_NEXTSEQ=`seq -f "%06g" $NEXTSEQ $NEXTSEQ`
-		NEXTLOG=binlog.${LONG_NEXTSEQ}
-		gzip -c9 $F >$BINLOG_BACKUP_DIR/$F.gz || return 1
-		purge_binlogs $NEXTLOG || return 1
+	#while there are more than one binlog
+	COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
+	while [ $COUNT -gt 1 ]; do
+		F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
+		backup_one_binlog "$F" || return 
+		COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
 	done
+	#flush logs and backup the last one
+	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
+	F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
+	backup_one_binlog "$F" || return 
 	remove_old_backups || return 1
 }
 
@@ -1192,6 +1186,20 @@ function backup_full()
 	fix_backup_timestamp $LAST_BACKUP || return 1
 	#compress_all_backups
 	backup_binlog || return 1
+}
+
+function backup_one_binlog()
+{
+	F="$1"
+	BF="`basename \"$F\"`" || return 1
+	LOGSEQ=`echo $F | cut -d . -f 2`
+	LOGSEQ=`expr $LOGSEQ + 0`
+	write_out "Saving binary log sequence $LOGSEQ"
+	NEXTSEQ=`expr $LOGSEQ + 1`
+	LONG_NEXTSEQ=`seq -f "%06g" $NEXTSEQ $NEXTSEQ`
+	NEXTLOG=binlog.${LONG_NEXTSEQ}
+	gzip -c9 $F >$BINLOG_BACKUP_DIR/${BF}.gz || return 1
+	purge_binlogs $NEXTLOG || return 1
 }
 
 function run()
