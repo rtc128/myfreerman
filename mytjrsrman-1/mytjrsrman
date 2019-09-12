@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.9
+RELEASE=1.2.10
 
 function binlog_backup_exists()
 {
@@ -42,9 +42,8 @@ function check_aux_dir_space()
 
 function check_backup_consistency()
 {
-	check_lock_file || return 1
 	write_out "Checking backup consistency"
-	cd "$BASE_BACKUP_DIR" || (remove_lock_file && return 1)
+	cd "$BASE_BACKUP_DIR" || return 1
 	for BKP in `ls`; do
 		if [ -d "$BKP" ]; then
 			if ! consistent_backup "$BKP"; then
@@ -52,7 +51,6 @@ function check_backup_consistency()
 			fi
 		fi
 	done
-	remove_lock_file
 }
 
 function check_config()
@@ -861,6 +859,7 @@ function restore()
 		esac
 	done
 	restore_validate_options || return 1
+	check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
@@ -1093,6 +1092,7 @@ function backup()
 	fi
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
+	check_backup_consistency || return 1
 	#get datadir
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" || return 1
 	#get mysql service
@@ -1109,12 +1109,7 @@ function backup()
 			return 1
 			;;
 	esac
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Finished"
-	else
-		echo "[$TS] Finished" >>"$LOG_FILE"
-	fi
+	write_out "Finished"
 }
 
 function backup_binlog()
@@ -1202,7 +1197,6 @@ function backup_full()
 function run()
 {
 	validate_config || return 1
-	check_backup_consistency || return 1
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
 	USE_AUX_INSTANCE=0
