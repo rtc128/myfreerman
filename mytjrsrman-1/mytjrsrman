@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.11
+RELEASE=1.2.12
 
 function binlog_backup_exists()
 {
@@ -43,6 +43,9 @@ function check_aux_dir_space()
 function check_backup_consistency()
 {
 	write_out "Checking backup consistency"
+	if ! [ -d "$BASE_BACKUP_DIR" ]; then
+		return
+	fi
 	cd "$BASE_BACKUP_DIR" || return 1
 	for BKP in `ls`; do
 		if [ -d "$BKP" ]; then
@@ -1128,13 +1131,18 @@ function backup_binlog()
 	COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
 	while [ $COUNT -gt 1 ]; do
 		F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
-		backup_one_binlog "$F" || return 
+		#next log
+		N="`head -n 2 \"$BINLOG_INDEX\" | tail -n 1`" || return 1
+		backup_one_binlog "$F" "$N" || return 
 		COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
 	done
 	#flush logs and backup the last one
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
+	#cur
 	F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
-	backup_one_binlog "$F" || return 
+	#next
+	N="`head -n 2 \"$BINLOG_INDEX\" | tail -n 1`" || return 1
+	backup_one_binlog "$F" "$N" || return 
 	remove_old_backups || return 1
 }
 
@@ -1190,16 +1198,17 @@ function backup_full()
 
 function backup_one_binlog()
 {
+	#file
 	F="$1"
 	BF="`basename \"$F\"`" || return 1
-	LOGSEQ=`echo $F | cut -d . -f 2`
+	#next
+	N="$2"
+	BN="`basename \"$N\"`" || return 1
+	LOGSEQ=`echo $BF | cut -d . -f 2`
 	LOGSEQ=`expr $LOGSEQ + 0`
 	write_out "Saving binary log sequence $LOGSEQ"
-	NEXTSEQ=`expr $LOGSEQ + 1`
-	LONG_NEXTSEQ=`seq -f "%06g" $NEXTSEQ $NEXTSEQ`
-	NEXTLOG=binlog.${LONG_NEXTSEQ}
-	gzip -c9 $F >$BINLOG_BACKUP_DIR/${BF}.gz || return 1
-	purge_binlogs $NEXTLOG || return 1
+	gzip -c9 "$F" >$BINLOG_BACKUP_DIR/${BF}.gz || return 1
+	purge_binlogs "$BN" || return 1
 }
 
 function run()
