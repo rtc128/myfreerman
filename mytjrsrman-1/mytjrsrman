@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.12
+RELEASE=1.2.13
 
 function binlog_backup_exists()
 {
@@ -1095,7 +1095,6 @@ function backup()
 	fi
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
-	check_backup_consistency || return 1
 	#get datadir
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" || return 1
 	#get mysql service
@@ -1151,48 +1150,27 @@ function backup_full()
 	CRED_OPT=`mount_credentials_opt` || return 1
 	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
-	BUFFER=`mktemp /tmp/backup.log.XXXXXX` || return 1
 	DATE_VAL=`date +%Y-%m-%d`
 	TIME_VAL=`date +%H-%M-%S`
 	TIMESTAMP=${DATE_VAL}_${TIME_VAL}
 	DIRECTORY="${BASE_BACKUP_DIR}/${TIMESTAMP}"
 	mkdir -p "$DIRECTORY" || return 1
 	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
+	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		write_out "===== STARTING mysqlbackup ====="
-		if ! mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | tee $BUFFER; then
-			cat $BUFFER
-			rm $BUFFER
-			return 1
-		fi
-		echo "[$TS] ===== FINISHED mysqlbackup ====="
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log
 	else
-		write_out "===== STARTING mysqlbackup ====="
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$BUFFER" 2>&1 || (cat "$BUFFER" >>"$LOG_FILE" && return 1)
-		write_out "===== FINISHED mysqlbackup ====="
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$LOG_FILE"
 	fi
-	if [ $BG_MODE -eq 1 ]; then
-		cat $BUFFER >>"$LOG_FILE"
-	fi
-	DATADIR="`grep -A 10 "Backup Config Options" $BUFFER | grep -w "datadir =" | cut -d = -f 2`"
-	SUCCESS=0
-	if grep -wi "^mysqlbackup completed ok" $BUFFER >/dev/null; then
-		SUCCESS=1
-	fi
-	rm $BUFFER
-	if [ $SUCCESS -eq 0 ]; then
-		LEN=${#DATADIR}
-		NEWLEN=`expr $LEN - 9`
-		BACKUP_DIR="${DATADIR:1:$NEWLEN}"
-		if [ -d "$BACKUP_DIR" ]; then
-			rm -r "$BACKUP_DIR"
-		fi
+	RETCODE=$?
+	write_out "===== FINISHED mysqlbackup ====="
+	check_backup_consistency
+	if [ $RETCODE -ne 0 ]; then
 		return 1
 	fi
-	cd $BASE_BACKUP_DIR || return 1
-	LAST_BACKUP=`ls | tail -n 1`
+	cd "$BASE_BACKUP_DIR" || return 1
+	LAST_BACKUP=`ls | tail -n 1` || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
-	#compress_all_backups
 	backup_binlog || return 1
 }
 
