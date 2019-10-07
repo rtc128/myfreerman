@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.2.13
+RELEASE=1.2.14
 
 function binlog_backup_exists()
 {
@@ -736,12 +736,7 @@ function recover()
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Reading binary log $LOGSEQ"
-	else
-		echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
-	fi
+	write_out "Reading binary log $LOGSEQ"
 	read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB || return 1
 	LOGSEQ=`expr $LOGSEQ + 1`
 	COMP_REQ_TIMESTAMP=`date -d"$REQ_TIMESTAMP" +%Y%m%d%H%M%S`
@@ -760,14 +755,9 @@ function recover()
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
 	#apply logs
-	mysql_start || (rm $TMP_SQL; return 1)
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Applying binary logs"
-	else
-		echo "[$TS] Applying binary logs" >>"$LOG_FILE"
-	fi
-	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT $AUX_SOCKET_OPT <$TMP_SQL
+	mysql_start || return 1
+	write_out "Applying binary logs"
+	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT $AUX_SOCKET_OPT <$TMP_SQL || return 1
 	rm $TMP_SQL
 }
 
@@ -867,21 +857,19 @@ function restore()
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 	fi
-	TS=`date +"%H:%M:%S"`
-	if [ $BG_MODE -eq 0 ]; then
-		echo "[$TS] Starting restore"
-	else
-		echo "[$TS] Starting restore" >>"$LOG_FILE"
-	fi
 	MYSQL_SERVICE=`find_mysql_service` || return 1
 	DB_COPY=0
 	MOMENT=`date +%Y%m%d-%H%M%S`
 	AUX_SOCKET_OPT=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
+	if ! [ -d "$BASE_BACKUP_DIR" ]; then
+		write_out "No backup to be restored"
+		return 1
+	fi
 	cd "$BASE_BACKUP_DIR" || return 1
 	DIR=`ls | tail -n 1 | cut -d . -f 1`
 	if [ -z "$DIR" ]; then
-		echo "No backup to be restored" >&2
+		write_out "No backup to be restored"
 		return 1
 	fi
 	BACKUP_DB_CONFIG_FILE=/tmp/my.cnf
@@ -914,7 +902,7 @@ function restore()
 		fi
 		AUX_BASEDIR=`mktemp -d -p "$AUX_BASEDIR" -t "aux_XXXXXXXX"` || return 1
 		BASENAME=`basename "$AUX_BASEDIR"` || return 1
-		chown mysql:mysql "$AUX_BASEDIR" || return 1
+		chown mysql "$AUX_BASEDIR" || return 1
 		DB_COPY=1
 		AUX_CONFIG=/tmp/${BASENAME}.cnf
 		AUX_DATADIR="$AUX_BASEDIR/datadir"
@@ -928,10 +916,11 @@ function restore()
 #onyl root
 		CUR_USER=`whoami` || return 1
 		if [ "$CUR_USER" != "root" ]; then
-			echo "User must be root" >&2
+			write_out "User must be root"
 			return 1
 		fi
 	fi
+	write_out "Starting restore"
 	check_new_db_name || return 1
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
 		check_xag_env
@@ -954,21 +943,11 @@ function restore()
 	fi
 	if [ $DB_COPY -eq 0 ]; then
 		create_incarnation $MOMENT
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Resetting binary logs"
-		else
-			echo "[$TS] Resetting binary logs" >>"$LOG_FILE"
-		fi
+		write_out "Resetting binary logs"
 		reset_master || return 1
 	fi
 	if [ $DB_COPY -eq 0 ]; then
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Database is read-only for regular users (root can write). After validating restoration, you must edit '$MYSQL_CONF_FILE', remove variable [mysqld]:read_only, and then run 'set global read_only=0;' in MySQL."
-		else
-			echo "[$TS] Database is read-only for regular users (root can write). After validating restoration, you must edit '$MYSQL_CONF_FILE', remove variable [mysqld]:read_only, and then run 'set global read_only=0;' in MySQL." >>"$LOG_FILE"
-		fi
+		write_out "Database is read-only for regular users (root can write). After validating restoration, you must edit '$MYSQL_CONF_FILE', remove variable [mysqld]:read_only, and then run 'set global read_only=0;' in MySQL."
 	fi
 	write_out "Finished"
 }
@@ -979,33 +958,39 @@ function restore_aux_instance()
 	create_aux_config $DIR || return 1
 	rm -fr "$AUX_DATADIR/*" || return 1
 	mkdir -p $AUX_DATADIR || return 1
-
+	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		echo "===== STARTING mysqlbackup ====="
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back || return 1
-		echo "===== FINISHED mysqlbackup ====="
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1
 	else
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ===== " >>"$LOG_FILE"
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back >>"$LOG_FILE" 2>&1 || return 1
-		echo "[$TS] ===== FINISHED mysqlbackup ===== " >>"$LOG_FILE"
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1
 	fi
-	chown -R mysql:mysql $AUX_DATADIR || return 1
+	write_out "===== FINISHED mysqlbackup ===== "
+	chown -R mysql $AUX_DATADIR || return 1
 }
 
 function restore_target_instance()
 {
-	DIR=$1
-	mysql_stop || return 1
-	#delete all mysql data before restoring
-	mkdir -p $DATADIR || return 1
-	rm -fr $DATADIR/* || return 1
+	DIR="$1"
+	#if server is running, abort
+	if mysqladmin ping >/dev/null 2>&1; then
+		write_out "MySQL is running - aborting"
+		return 1
+	fi
+	mkdir -p "$DATADIR" || return 1
+	#if datadir is not empty, abort
+	if ls -d "$DATADIR"/* >/dev/null 2>&1; then
+		write_out "Data directory is not empty - aborting"
+		return 1
+	fi
 	if [ -n "$REDODIR" ]; then
 		if [ "${REDODIR:0:1}" != "/" ]; then
-			REDODIR=$DATADIR/$REDODIR
+			REDODIR="$DATADIR/$REDODIR"
 		fi
-		mkdir -p $REDODIR || return 1
-		rm -fr $REDODIR/* || return 1
+		mkdir -p "$REDODIR" || return 1
+		if ls -d "$REDODIR"/* >/dev/null 2>&1; then
+			write_out "Redo directory is not empty - aborting"
+			return 1
+		fi
 	fi
 	if [ -n "$UNDODIR" ]; then
 		if [ "${UNDODIR:0:1}" != "/" ]; then
@@ -1014,26 +999,20 @@ function restore_target_instance()
 		mkdir -p $UNDODIR || return 1
 		rm -fr $UNDODIR/* || return 1
 	fi
-	CONFIG_FILE=$DIR/server-my.cnf
+	CONFIG_FILE="$DIR/server-my.cnf"
+	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ====="
-		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back || return 1 
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== FINISHED mysqlbackup ====="
+		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1 
 	else
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== STARTING mysqlbackup ===== " >>"$LOG_FILE"
-		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR --force copy-back >>"$LOG_FILE" 2>&1 || return 1 
-		TS=`date +"%H:%M:%S"`
-		echo "[$TS] ===== FINISHED mysqlbackup ===== " >>"$LOG_FILE"
+		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1 
 	fi
-	chown -R mysql:mysql $DATADIR || return 1
+	write_out "===== FINISHED mysqlbackup ===== "
+	chown -R mysql $DATADIR || return 1
 	if [ -n "$REDODIR" ]; then
-		chown -R mysql:mysql $REDODIR || return 1
+		chown -R mysql $REDODIR || return 1
 	fi
 	if [ -n "$UNDODIR" ]; then
-		chown -R mysql:mysql $UNDODIR || return 1
+		chown -R mysql $UNDODIR || return 1
 	fi
 }
 
@@ -1085,7 +1064,7 @@ function backup()
 {
 	if [ $BG_MODE -eq 1 ]; then
 		if ! mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1; then
-			write_out "No MySQL server running - ignoring backup" >>"$LOG_FILE"
+			write_out "No MySQL server running - ignoring backup"
 			return
 		fi
 	fi
@@ -1160,7 +1139,7 @@ function backup_full()
 	if [ $BG_MODE -eq 0 ]; then
 		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log
 	else
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$LOG_FILE"
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$LOG_FILE" 2>&1
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
