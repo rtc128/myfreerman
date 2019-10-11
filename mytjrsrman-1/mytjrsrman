@@ -77,6 +77,19 @@ function check_depends()
 	fi
 }
 
+function check_empty_target_database()
+{
+	if [ -z "$BINLOG_MASK" ]; then
+		write_out "Binary logs disabled - aborting"
+		return 1
+	fi
+
+	if ls "$BINLOG_MASK"* >/dev/null 2>&1; then
+		write_out "Binary logs [$BINLOG_MASK] found - aborting"
+		return 1
+	fi
+}
+
 function check_log_config()
 {
 	if [ $BG_MODE -eq 0 ]; then
@@ -122,6 +135,43 @@ function check_new_db_name()
 			return 1
 		fi
 	fi
+}
+
+function check_target_instance_config()
+{
+	write_out "Checking target instance configuration"
+	if ! which mysqld >/dev/null 2>&1; then
+		write_out "Cannot find mysqld executable"
+		return 1
+	fi
+	T_LOG_FILE=`mktemp /tmp/mysqld.XXXXXX.log` || return 1
+	T_PID_FILE=`mktemp /tmp/mysqld.XXXXXX.pid` || return 1
+	rm "$T_PID_FILE" || return 1
+	if ! mysqld --initialize --bind-address=127.0.0.1 --log-error="$T_LOG_FILE" --pid-file="$T_PID_FILE" >>"$T_LOG_FILE" 2>&1; then
+		write_out "Cannot check target instance configuration. Check server log in '$T_LOG_FILE'."
+	fi
+	mysqld --bind-address=127.0.0.1 --log-error="$T_LOG_FILE" --pid-file="$T_PID_FILE" &
+	sleep 10
+	SUCCESS=1
+	if ! [ -f "$T_PID_FILE" ]; then
+		SUCCESS=0
+	else
+		PID=`cat "$T_PID_FILE"`
+		if ! kill -0 $PID; then
+			SUCCESS=0
+		fi
+	fi
+	if [ $SUCCESS -eq 1 ]; then
+		if ! kill_pid "$T_PID_FILE"; then
+			write_out "Timeout reached waiting for target instance to shutdown. PID file: '$T_PID_FILE'. Log file: '$T_LOG_FILE'."
+			return 1
+		fi
+	else
+		write_out "Cannot check target instance configuration. Check server log in '$T_LOG_FILE'."
+		drop_target_database
+		return 1
+	fi
+	drop_target_database || return 1
 }
 
 function check_xag_env()
@@ -270,6 +320,23 @@ function create_incarnation()
 	mv "$BACKUP_DIR/base" "$BACKUP_DIR/binlog" "$RESTORE_DIR" || return 1
 }
 
+function drop_target_database()
+{
+	if [ -n "$REDODIR" ]; then
+		rm -fr "$REDODIR"/* || return 1
+	fi
+	if [ -n "$UNDODIR" ]; then
+		rm -fr "$UNDODIR"/* || return 1
+	fi
+	if [ -n "$BINLOG_MASK" ]; then
+		rm -f "$BINLOG_MASK"* || return 1
+	fi
+	if [ -n "$BINLOG_INDEX" ]; then
+		rm -f "$BINLOG_INDEX" || return 1
+	fi
+	rm -fr "$DATADIR/"* || return 1
+}
+
 function exist_base_backup()
 {
 	if ! [ -d $BASE_BACKUP_DIR ]; then
@@ -376,8 +443,8 @@ function get_binlog_path()
 	LOGSEQ=$1
 	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
 	BINLOG=binlog.$LONG_LOGSEQ
-	if [ -f $BINLOG_WRITE_DIR/$BINLOG ]; then
-		echo $BINLOG_WRITE_DIR/$BINLOG
+	if [ -f "$binlog_dir/$BINLOG" ]; then
+		echo "$binlog_dir/$BINLOG"
 		return
 	fi
 	if [ -f $BINLOG_BACKUP_DIR/$BINLOG ]; then
@@ -470,6 +537,23 @@ function get_oldest_full_backup()
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	ls | head -n 1
+}
+
+function kill_pid()
+{
+	WAIT_TIMEOUT=15
+	PID_FILE="$1"
+	PID=`cat "$PID_FILE"`
+	kill $PID
+	sleep 2
+	COUNT=2
+	while kill -0 $PID 2>/dev/null; do
+		COUNT=$((COUNT + 1))
+		if [ $COUNT -ge $WAIT_TIMEOUT ]; then
+			return 1
+		fi
+		sleep 1
+	done
 }
 
 function list()
@@ -852,6 +936,10 @@ function restore()
 		esac
 	done
 	restore_validate_options || return 1
+	if ! [ -f "$MYSQL_CONF_FILE" ]; then
+		write_out "Cannot find readable file '$MYSQL_CONF_FILE'"
+		return 1
+	fi
 	check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
@@ -872,13 +960,27 @@ function restore()
 		write_out "No backup to be restored"
 		return 1
 	fi
-	BACKUP_DB_CONFIG_FILE=/tmp/my.cnf
-	#uncompress_backup "$DIR" || return 1
-	cp $BASE_BACKUP_DIR/${DIR}/server-my.cnf $BACKUP_DB_CONFIG_FILE || return 1
-	DATADIR="`crudini --get \"$BACKUP_DB_CONFIG_FILE\" mysqld datadir`" || return 1
-	REDODIR="`crudini --get \"$BACKUP_DB_CONFIG_FILE\" mysqld innodb_log_group_home_dir`" || return 1
-	UNDODIR="`crudini --get \"$BACKUP_DB_CONFIG_FILE\" mysqld innodb_undo_directory`" || return 1
-	rm $BACKUP_DB_CONFIG_FILE
+	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" 2>/dev/null
+	if [ -z "$DATADIR" ]; then
+		write_out "Data directory configuration [mysqld:datadir] cannot be empty"
+		return 1
+	fi
+
+	REDODIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld innodb_log_group_home_dir 2>/dev/null`"
+	UNDODIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld innodb_undo_directory 2>/dev/null`"
+	BINLOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin_index 2>/dev/null`"
+	BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin 2>/dev/null`"
+	if [ -z "$BINLOG_MASK" ]; then
+		write_out "Binary logs path [mysqld:log_bin] cannot be empty"
+		return 1
+	fi
+
+	#secure files directory
+	SECURE_DIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld secure_file_priv 2>/dev/null`"
+
+	#mysqld user
+	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" mysqld user 2>/dev/null`"
+
 	if [ "$RESTORE_DB_OLD_NAME" = "mysql" -o "$RESTORE_DB_OLD_NAME" = "sys" -o "$RESTORE_DB_OLD_NAME" = "information_schema" ]; then
 		echo "Invalid database name '$RESTORE_DB_OLD_NAME'" >&2
 		return 1
@@ -912,15 +1014,7 @@ function restore()
 		AUX_BIND_ADDRESS=127.0.0.1
 		AUX_PORT=`find_aux_port` || return 1
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
-	else
-#onyl root
-		CUR_USER=`whoami` || return 1
-		if [ "$CUR_USER" != "root" ]; then
-			write_out "User must be root"
-			return 1
-		fi
 	fi
-	write_out "Starting restore"
 	check_new_db_name || return 1
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
 		check_xag_env
@@ -937,9 +1031,6 @@ function restore()
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
 		copy_restored_tables || return 1
-	fi
-	if [ $USE_AUX_INSTANCE -eq 0 ]; then
-		rm -f $BINLOG_WRITE_DIR/binlog.*
 	fi
 	if [ $DB_COPY -eq 0 ]; then
 		create_incarnation $MOMENT
@@ -994,17 +1085,28 @@ function restore_target_instance()
 	fi
 	if [ -n "$UNDODIR" ]; then
 		if [ "${UNDODIR:0:1}" != "/" ]; then
-			UNDODIR=$DATADIR/$UNDODIR
+			UNDODIR="$DATADIR/$UNDODIR"
 		fi
-		mkdir -p $UNDODIR || return 1
-		rm -fr $UNDODIR/* || return 1
+		mkdir -p "$UNDODIR" || return 1
+		rm -fr "$UNDODIR/"* || return 1
 	fi
-	CONFIG_FILE="$DIR/server-my.cnf"
+	if [ -n "$BINLOG_DIR" ]; then
+		mkdir -p "$BINLOG_DIR" || return 1
+	fi
+	if [ -n "$SECURE_DIR" ]; then
+		mkdir -p "$SECURE_DIR" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$SECURE_DIR" || return 1
+		fi
+		chmod 700 "$SECURE_DIR" || return 1
+	fi
+	check_empty_target_database || return 1
+	check_target_instance_config || return 1
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1 
 	else
-		mysqlbackup --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 	chown -R mysql $DATADIR || return 1
@@ -1069,12 +1171,21 @@ function backup()
 		fi
 	fi
 	if ! which mysqlbackup >/dev/null 2>&1; then
-		echo "Cannot find 'mysqlbackup' in PATH" >&2
+		write_out "Cannot find 'mysqlbackup' in PATH"
 		return 1
 	fi
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
 	#get datadir
+	BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin`" 2>/dev/null
+	if [ -z "$BINLOG_MASK" ]; then
+		BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log-bin`" 2>/dev/null
+	fi
+	if [ -z "$BINLOG_MASK" ]; then
+		write_out "Cannot find binary logs directory in MySQL configuration file. Check if '$MYSQL_CONF_FILE' has variable [mysqld]:log_bin."
+		return 1
+	fi
+	BINLOG_DIR="`dirname $BINLOG_MASK`" || return 1
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" || return 1
 	#get mysql service
 	MYSQL_SERVICE=`find_mysql_service`
@@ -1104,7 +1215,7 @@ function backup_binlog()
 	BINLOG_INDEX="`mysql $CRED_OPT -e \"select @@log_bin_index\" | column -t | tail -n 1`" || return 1
 	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
-	cd "$BINLOG_WRITE_DIR" || return 1
+	cd "$binlog_dir" || return 1
 	#while there are more than one binlog
 	COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
 	while [ $COUNT -gt 1 ]; do
@@ -1302,19 +1413,6 @@ check_depends || exit -1
 #check mysql conf file
 if ! [ -f "$MYSQL_CONF_FILE" ]; then
 	echo "MySQL config '$MYSQL_CONF_FILE' does not exist or is not a file." >&2
-	exit -1
-fi
-BINLOG_BASE="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin`" 2>/dev/null
-if [ -z "$BINLOG_BASE" ]; then
-	BINLOG_BASE="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log-bin`" 2>/dev/null
-fi
-if [ -z "$BINLOG_BASE" ]; then
-	echo "Cannot find binary logs directory in MySQL configuration file. Check if '$MYSQL_CONF_FILE' has variable [mysqld]:log_bin." >&2
-	exit -1
-fi
-BINLOG_WRITE_DIR="`echo $BINLOG_BASE | sed -e 's/\(.*\)\/.*/\1/'`" || exit -1
-if ! [ -d "$BINLOG_WRITE_DIR" ]; then
-	echo "Binary logs location '$BINLOG_WRITE_DIR' does not exist or is not a directory." >&2
 	exit -1
 fi
 BASE_BACKUP_DIR="$BACKUP_DIR/base"
