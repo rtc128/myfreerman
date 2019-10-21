@@ -1,6 +1,6 @@
 Name:           mytjrsrman
 Version:        1
-Release:        1.3.04
+Release:        1.3.0
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
