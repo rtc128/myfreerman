@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.1
+RELEASE=1.3.2
 
 function binlog_backup_exists()
 {
@@ -859,7 +859,7 @@ function recover()
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
 	#apply logs
-	MSG="Starting server"
+	MSG="Starting server (local access)"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		MSG="Starting server (aux)"
 	fi
@@ -1079,9 +1079,9 @@ function restore_aux_instance()
 	mkdir -p $AUX_DATADIR || return 1
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' || return 1
 	else
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE" || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 	chown -R mysql $AUX_DATADIR || return 1
@@ -1145,9 +1145,9 @@ function restore_target_instance()
 	check_target_instance_config || return 1
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' || return 1 
 	else
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE" || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
 	if [ -n "$MYSQLD_USER" ]; then
@@ -1245,7 +1245,6 @@ function backup()
 			return 1
 			;;
 	esac
-	write_out "Finished"
 }
 
 function backup_binlog()
@@ -1292,9 +1291,9 @@ function backup_full()
 	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | sed -e 's/^/\t/' 
 	else
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log >>"$LOG_FILE" 2>&1
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE"
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -1364,8 +1363,9 @@ function run()
 	esac
 	#remove old logs
 	if [ $BG_MODE -eq 1 ]; then
-		find "$LOG_DIR" -mtime +45 -delete
+		find "$LOG_DIR" -mtime +60 -delete
 	fi
+	write_out "Finished"
 }
 
 function stop_aux_instance()
@@ -1464,7 +1464,7 @@ BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 RESTORE_BACKUP_DIR="$BACKUP_DIR/restore"
 if [ $BG_MODE -eq 1 ]; then
 	TIMESTAMP=`date +%Y-%m-%d`
-	LOG_FILE="$LOG_DIR/$TIMESTAMP.log"
+	LOG_FILE="`mktemp \"${LOG_DIR}/${TIMESTAMP}.XXXXXX.log\"`" || exit 1
 fi
 run $*
 RETCODE=$?

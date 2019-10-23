@@ -53,8 +53,10 @@ List current backups. List \fBfull\fR or \fBbinlog\fR backups.
 .B restore
 
 Restore a previously created backup.
+By default, after restoring a backup, a new backup incarnation is created. Directories $BACKUP_DIR/base and $BACKUP_DIR/binlog are moved to $BACKUP_DIR/restore/$CURRENT_TIMESTAMP.
+If you anytime wish to access this backupset again, you need to manually move contents from $BACKUP_DIR/restore/$CURRENT_TIMESTAMP to $BACKUP_DIR. See -n option.
 
-	-n Do not create a new database incarnation. This is used to restore backups in different environments, such restoring production backups in test servers.
+	-n Do not create a new backup incarnation. This is used to restore backups in different environments, such as restoring production backups in test servers.
 
 	-p Restore using a specific point in time.
 
