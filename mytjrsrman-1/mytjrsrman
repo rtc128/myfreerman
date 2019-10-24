@@ -1,6 +1,21 @@
 #!/bin/bash
-RELEASE=1.3.3
+RELEASE=1.3.4
 
+function apply_binlog()
+{
+	CONFIG="$1"
+	FILENAME="$2"
+	CRED_OPT=`mount_target_credentials_opt`
+	if ! mysql --defaults-file="$CONFIG" $CRED_OPT <"$FILENAME"; then
+		MSG="Stopping server"
+		if [ $USE_AUX_INSTANCE -eq 1 ]; then
+			MSG="Stopping server (aux)"
+		fi
+		write_out "$MSG"
+		mysql_stop "$CONFIG"
+		return 1
+	fi
+}
 function binlog_backup_exists()
 {
 	cd $BINLOG_BACKUP_DIR || return 1
@@ -386,12 +401,14 @@ function find_aux_port()
 		fi
 	done
 }
+
 function find_base_backup()
 {
 	REQ_TIMESTAMP=`date --date="$1" +%Y%m%d%H%M%S` || return 1
 	if [ -z "$REQ_TIMESTAMP" ]; then
 		return 1
 	fi
+	cd "$BASE_BACKUP_DIR" || return 1
 	for BKP in `ls -r | cut -d . -f 1`; do
 		DATE=${BKP:0:10}
 		TIME=${BKP:11:8}
@@ -419,17 +436,6 @@ function fix_backup_timestamp()
 		if [ -d ${BACKUP} ]; then
 			mv $BACKUP $NEWNAME || return 1
 		fi
-	fi
-}
-
-function find_mysql_service()
-{
-	if [ -n "$MYSQL_SERVICE_NAME" ]; then
-		echo $MYSQL_SERVICE_NAME
-		return
-	fi
-	if [ -n "$XAG_INSTANCE_NAME" ]; then
-		return
 	fi
 }
 
@@ -518,25 +524,6 @@ function get_binlog_transaction_timestamp()
 	rm $TMP_SQL
 	TIMESTAMP="${LINE:1:15}"
 	date -d"$TIMESTAMP" +%Y-%m-%d_%H-%M-%S
-}
-
-function get_binlog_timestamp()
-{
-	LOGSEQ=$1
-	BINLOG=`get_binlog_path $LOGSEQ` || return 1
-	PLAIN_BINLOG=$BINLOG
-	TMP_BINLOG=
-	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
-		TMP_BINLOG=`mktemp /tmp/tmp-binlog.XXXXXX`
-		PLAIN_BINLOG=$TMP_BINLOG
-		gunzip -c $BINLOG >$PLAIN_BINLOG || return 1
-	fi
-	LINE=`mysqlbinlog $PLAIN_BINLOG | grep -w 'Start: binlog' | head -n 1`
-	if [ -n "$TMP_BINLOG" ]; then
-		rm $TMP_BINLOG
-	fi
-	TIMESTAMP="${LINE:1:15}"
-	date -d"$TIMESTAMP" +%Y%m%d%H%M%S || return 1
 }
 
 function get_mysql_version()
@@ -840,42 +827,29 @@ function recover()
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
-	write_out "Reading binary log $LOGSEQ"
-	read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB || return 1
-	LOGSEQ=`expr $LOGSEQ + 1`
-	COMP_REQ_TIMESTAMP=`date -d"$REQ_TIMESTAMP" +%Y%m%d%H%M%S`
-	while binlog_backup_exists $LOGSEQ; do
-		TS=`date +"%H:%M:%S"`
-		if [ $BG_MODE -eq 0 ]; then
-			echo "[$TS] Reading binary log $LOGSEQ"
-		else
-			echo "[$TS] Reading binary log $LOGSEQ " >>"$LOG_FILE"
-		fi
-		LOG_TIMESTAMP=`get_binlog_timestamp $LOGSEQ` || return 1
-		if [ $LOG_TIMESTAMP -gt $COMP_REQ_TIMESTAMP ]; then
-			break
-		fi
-		read_binlog $LOGSEQ 0 $MY_REQ_TIMESTAMP $TMP_SQL || return 1
-		LOGSEQ=`expr $LOGSEQ + 1`
-	done
-	#apply logs
+
 	MSG="Starting server (local access)"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		MSG="Starting server (aux)"
 	fi
 	write_out "$MSG"
 	mysql_start "$CONFIG" || return 1
-	write_out "Applying binary logs"
-	if ! mysql --defaults-file="$CONFIG" $CRED_OPT <$TMP_SQL; then
-		MSG="Stopping server"
-		if [ $USE_AUX_INSTANCE -eq 1 ]; then
-			MSG="Stopping server (aux)"
-		fi
-		write_out "$MSG"
-		mysql_stop "$CONFIG"
-		rm $TMP_SQL
-		return 1
-	fi
+
+	write_out "Applying binary log $LOGSEQ"
+	read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB || return 1
+	apply_binlog "$CONFIG" $TMP_SQL || return 1
+
+	LOGSEQ=`expr $LOGSEQ + 1`
+	COMP_REQ_TIMESTAMP=`date -d"$REQ_TIMESTAMP" +%Y%m%d%H%M%S`
+	while binlog_backup_exists $LOGSEQ; do
+		rm $TMP_SQL || return 1
+		touch $TMP_SQL || return 1
+		write_out "Applying binary log $LOGSEQ"
+		read_binlog $LOGSEQ 0 $MY_REQ_TIMESTAMP $TMP_SQL || return 1
+		apply_binlog "$CONFIG" $TMP_SQL || return 1
+		LOGSEQ=`expr $LOGSEQ + 1`
+	done
+	#apply logs
 	rm $TMP_SQL
 }
 
@@ -943,6 +917,7 @@ function reset_master()
 
 function restore()
 {
+	PITR=0
 	RESTORE_TABLE_LIST=
 	local OPTIND l_opt
 	while getopts "np:d:t:x:" l_opt; do
@@ -954,6 +929,7 @@ function restore()
 				DB_COPY=1
 				;;
 			p)
+				PITR=1
 				REQ_TIMESTAMP=${OPTARG}
 				ISO_REQ_TIMESTAMP=${OPTARG/_/ }
 				DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
@@ -979,11 +955,9 @@ function restore()
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 	fi
-	MYSQL_SERVICE=`find_mysql_service` || return 1
 	DB_COPY=0
 	MOMENT=`date +%Y%m%d-%H%M%S`
 	AUX_SOCKET_OPT=
-	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	if ! [ -d "$BASE_BACKUP_DIR" ]; then
 		write_out "No backup to be restored"
 		return 1
@@ -1058,7 +1032,7 @@ function restore()
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
 		copy_restored_tables || return 1
 	fi
-	if [ $DB_COPY -eq 0 ]; then
+	if [ $PITR -eq 1 -a $DB_COPY -eq 0 ]; then
 		create_incarnation $MOMENT
 		write_out "Resetting binary logs"
 		reset_master || return 1
@@ -1196,14 +1170,6 @@ function restore_validate_tablenames()
 function validate_config()
 {
 	check_log_config || return 1
-	if [ -n "$MYSQL_SERVICE_NAME" -a -n "$XAG_INSTANCE_NAME" ]; then
-		echo "Configuration variables MYSQL_SERVICE_NAME and XAG_INSTANCE_NAME cannot be both set" >&2
-		return 1
-	fi
-	if [ -z "$MYSQL_SERVICE_NAME" -a -z "$XAG_INSTANCE_NAME" ]; then
-		echo "Configuration variables MYSQL_SERVICE_NAME and XAG_INSTANCE_NAME cannot be both empty" >&2
-		return 1
-	fi
 }
 
 function backup()
@@ -1232,7 +1198,6 @@ function backup()
 	BINLOG_DIR="`dirname \"$BINLOG_MASK\"`" || return 1
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" || return 1
 	#get mysql service
-	MYSQL_SERVICE=`find_mysql_service`
 	case $CMD in
 		full)
 			backup_full || return 1
@@ -1292,7 +1257,7 @@ function backup_full()
 	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | sed -e 's/^/\t/' 
+		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | sed -e 's/^/\t/' 
 	else
 		mysqlbackup --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --skip-binlog --backup-dir="${DIRECTORY}" backup-and-apply-log 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE"
 	fi
