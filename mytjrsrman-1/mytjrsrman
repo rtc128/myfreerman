@@ -1181,6 +1181,7 @@ function validate_config()
 
 function backup()
 {
+	CRED_OPT=`mount_target_credentials_opt`
 	if [ $BG_MODE -eq 1 ]; then
 		if ! mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1; then
 			write_out "No MySQL server running - ignoring backup"
