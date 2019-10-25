@@ -1060,9 +1060,9 @@ function restore_aux_instance()
 	mkdir -p $AUX_DATADIR || return 1
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 || return 1
 	else
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE" || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 	chown -R mysql $AUX_DATADIR || return 1
@@ -1126,9 +1126,9 @@ function restore_target_instance()
 	check_target_instance_config || return 1
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 || return 1 
 	else
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back 2>&1 | sed -e 's/^/\t/' >>"$LOG_FILE" || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR copy-back >>"$LOG_FILE" 2>&1 || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
 	if [ -n "$MYSQLD_USER" ]; then
