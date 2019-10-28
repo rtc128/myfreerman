@@ -7,14 +7,16 @@ function apply_binlog()
 	FILENAME="$2"
 	CRED_OPT=`mount_target_credentials_opt`
 	if ! mysql --defaults-file="$CONFIG" $CRED_OPT <"$FILENAME"; then
-		MSG="Stopping server"
+		ITYPE="restricted"
 		if [ $USE_AUX_INSTANCE -eq 1 ]; then
-			MSG="Stopping server (aux)"
+			ITYPE="aux"
 		fi
-		write_out "$MSG"
-		mysql_stop "$CONFIG"
+		mysql_stop "$CONFIG" $ITYPE
 		return 1
 	fi
+	#rotate binlogs
+	CRED_OPT=`mount_target_credentials_opt`
+	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
 }
 function binlog_backup_exists()
 {
@@ -650,13 +652,16 @@ function mount_aux_defaults_file_opt()
 
 function mysql_start()
 {
+	CONFIG="$1"
+	INST_TYPE="$2"
+
 	START_TIMEOUT=240
 
-	CONFIG="$1"
 	LOG_ERROR="`crudini --get \"$CONFIG\" mysqld log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONFIG\" mysqld pid_file 2>/dev/null`"
 	CMD="mysqld"
 	OPTS="--defaults-file=$CONFIG --bind-address=127.0.0.1 --console"
+	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
 	sleep 2
 	COUNT=2
@@ -709,9 +714,11 @@ function mysql_start_aux()
 function mysql_stop()
 {
 	CONFIG="$1"
+	INST_TYPE="$2"
 	STOP_TIMEOUT=20
 	PID_FILE="`crudini --get \"$CONFIG\" mysqld pid_file 2>/dev/null`"
 	LOG_ERROR="`crudini --get \"$CONFIG\" mysqld log_error 2>/dev/null`"
+	write_out "Stopping server (${INST_TYPE})"
 	PID=`cat "$PID_FILE"`
 	kill $PID
 	sleep 1
@@ -827,23 +834,22 @@ function read_binlog()
 function recover()
 {
 	BASE_BACKUP=$1
-	MY_REQ_TIMESTAMP=$2
-	CONFIG="$3"
 	REQ_TIMESTAMP="${2/_/ }"
+	CONFIG="$3"
 	CRED_OPT=`mount_credentials_opt` || return 1
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
-
-	MSG="Starting server (local access)"
+	ITYPE="restricted"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		MSG="Starting server (aux)"
+		ITYPE="aux"
 	fi
-	write_out "$MSG"
-	mysql_start "$CONFIG" || return 1
-
+	mysql_start "$CONFIG" $ITYPE || return 1
 	write_out "Applying binary log $LOGSEQ"
-	read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB || return 1
+	if ! read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB; then
+		mysql_stop "$CONFIG" $ITYPE
+		return 1
+	fi
 	apply_binlog "$CONFIG" $TMP_SQL || return 1
 
 	LOGSEQ=`expr $LOGSEQ + 1`
@@ -856,7 +862,6 @@ function recover()
 		apply_binlog "$CONFIG" $TMP_SQL || return 1
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
-	#apply logs
 	rm $TMP_SQL
 }
 
@@ -926,6 +931,7 @@ function restore()
 {
 	PITR=0
 	RESTORE_TABLE_LIST=
+	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	local OPTIND l_opt
 	while getopts "np:d:t:x:" l_opt; do
 		case $l_opt in
@@ -1044,12 +1050,11 @@ function restore()
 		write_out "Resetting binary logs"
 		reset_master || return 1
 	fi
-	MSG="Stopping server"
+	ITYPE="restricted"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		MSG="Stopping server (aux)"
+		ITYPE="aux"
 	fi
-	write_out "$MSG"
-	mysql_stop "$CONFIG"
+	mysql_stop "$CONFIG" $ITYPE
 }
 
 function restore_aux_instance()
