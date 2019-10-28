@@ -834,7 +834,8 @@ function read_binlog()
 function recover()
 {
 	BASE_BACKUP=$1
-	REQ_TIMESTAMP="${2/_/ }"
+	REQ_TIMESTAMP="$2"
+	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	CONFIG="$3"
 	CRED_OPT=`mount_credentials_opt` || return 1
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
@@ -846,19 +847,18 @@ function recover()
 	fi
 	mysql_start "$CONFIG" $ITYPE || return 1
 	write_out "Applying binary log $LOGSEQ"
-	if ! read_binlog $LOGSEQ $POSITION $MY_REQ_TIMESTAMP $TMP_SQL $RECOVER_DB; then
+	if ! read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL $RECOVER_DB; then
 		mysql_stop "$CONFIG" $ITYPE
 		return 1
 	fi
 	apply_binlog "$CONFIG" $TMP_SQL || return 1
 
 	LOGSEQ=`expr $LOGSEQ + 1`
-	COMP_REQ_TIMESTAMP=`date -d"$REQ_TIMESTAMP" +%Y%m%d%H%M%S`
 	while binlog_backup_exists $LOGSEQ; do
 		rm $TMP_SQL || return 1
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log $LOGSEQ"
-		read_binlog $LOGSEQ 0 $MY_REQ_TIMESTAMP $TMP_SQL || return 1
+		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
 		apply_binlog "$CONFIG" $TMP_SQL || return 1
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
