@@ -22,7 +22,7 @@ LOCK_FILE: Lock file path. Lock file is used to block simultaneous instances run
 
 MYSQL_CONF_FILE: Path to MySQL config file - default: /etc/my.cnf.
 
-MYSQL_SERVICE_NAME: MySQL Server service name, for installations that use Linux services - SysV/Systemd. Leave empty if you use Oracle Clusterware.
+READ_ONLY: 1 to avoid making backups - default: 0. Useful for safety when an instance is always only a copy from another one.
 
 READ_THREADS: Number of threads for reading tasks. Default: 1. Max: 20.
 
@@ -45,8 +45,6 @@ LOG_DIR=/var/log/mytjrsrman
 LOCK_FILE=/var/lib/mytjrsrman.lock
 
 #MYSQL_CONF_FILE= #Use the default path
-
-#MYSQL_SERVICE_NAME= #Use XAG
 
 RETENTION_PERIOD=20
 

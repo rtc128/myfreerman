@@ -32,6 +32,10 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/mytjrsrman.conf.8.gz
 
 %changelog
+* Thu Oct 31 2019 Rodrigo Tassinari 1.3.9
+	- New config variable: READ_ONLY
+	- Fix in broken full backup when mysql config wasn't the default one
+
 * Thu Oct 31 2019 Rodrigo Tassinari 1.3.8
 	- Fix in broken non-PITR!
 
