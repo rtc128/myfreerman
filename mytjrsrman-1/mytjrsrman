@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.7
+RELEASE=1.3.8
 
 function apply_binlog()
 {
@@ -18,6 +18,7 @@ function apply_binlog()
 	CRED_OPT=`mount_target_credentials_opt`
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
 }
+
 function binlog_backup_exists()
 {
 	cd $BINLOG_BACKUP_DIR || return 1
@@ -1181,11 +1182,21 @@ function restore_validate_tablenames()
 
 function validate_config()
 {
+	#read-only
+	if [ "$READ_ONLY" != "0" -a "$READ_ONLY" != "1" ]; then
+		write_out "Invalid value for READ_ONLY parameter"
+		return 1
+	fi
 	check_log_config || return 1
 }
 
 function backup()
 {
+	if [ $READ_ONLY -eq 1 ]; then
+		write_out "Read-only mode is enabled in configuration"
+		return 1
+	fi
+
 	CRED_OPT=`mount_target_credentials_opt`
 	if [ $BG_MODE -eq 1 ]; then
 		if ! mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1; then
@@ -1419,6 +1430,7 @@ BG_MODE=0
 READ_THREADS=1
 WRITE_THREADS=1
 CONFIG_FILE=/etc/mytjrsrman.conf
+READ_ONLY=0
 while getopts "byc:" opt; do
 	case $opt in
 		b)
