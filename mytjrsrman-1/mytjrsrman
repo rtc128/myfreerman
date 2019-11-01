@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.9
+RELEASE=1.3.10
 
 function apply_binlog()
 {
@@ -1068,7 +1068,7 @@ function restore_target_instance()
 	DIR="$1"
 	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" mysqld user`" 2>/dev/null
 	#if server is running, abort
-	if mysqladmin ping >/dev/null 2>&1; then
+	if mysqladmin --defaults-file="$MYSQL_CONF_FILE" ping >/dev/null 2>&1; then
 		write_out "MySQL is running - aborting"
 		return 1
 	fi
