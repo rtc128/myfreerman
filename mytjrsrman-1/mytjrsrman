@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.10
+RELEASE=1.3.11
 
 function apply_binlog()
 {
@@ -179,11 +179,13 @@ function check_target_instance_config()
 		return 1
 	fi
 	TMP_LOG=`mktemp /tmp/mysqld.XXXXXX.log` || return 1
-	if ! mysqld --defaults-file="$MYSQL_CONF_FILE" --initialize >>"$TMP_LOG" 2>&1; then
+	TMP_CONF=`mktemp /tmp/mysql.XXXXXX.cnf` || return 1
+	grep -v "^audit" "$MYSQL_CONF_FILE" >$TMP_CONF || return 1
+	if ! mysqld --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
 		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
 		return 1
 	fi
-	mysqld --defaults-file="$MYSQL_CONF_FILE" --bind-address=127.0.0.1 &
+	mysqld --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 &
 	sleep 3
 	SUCCESS=1
 	if ! [ -f "$PID_FILE" ]; then
@@ -204,6 +206,7 @@ function check_target_instance_config()
 		drop_target_database
 		return 1
 	fi
+	rm $TMP_CONF
 	drop_target_database || return 1
 }
 
@@ -292,7 +295,7 @@ function copy_restored_tables()
 function create_aux_config()
 {
 	DIR=$1
-	MYSQL_VER=`get_mysql_version $DIR` || return 1
+	MYSQL_VER=`get_mysql_usage $DIR` || return 1
 	if [ -z "$AUX_BASEDIR" ]; then
 		echo "Cannot find 'basedir' in '$MYSQL_CONF_FILE'" >&2
 		return 1
@@ -520,10 +523,10 @@ function get_binlog_transaction_timestamp()
 	date -d"$TIMESTAMP" +%Y-%m-%d_%H-%M-%S
 }
 
-function get_mysql_version()
+function get_mysql_usage()
 {
 	BACKUP=$1
-	grep -w "mysql_version" $BASE_BACKUP_DIR/$BACKUP/meta/backup_variables.txt | cut -d '=' -f 2 | cut -d '.' -f 1 || return 1
+	grep -w "mysql_usage" $BASE_BACKUP_DIR/$BACKUP/meta/backup_variables.txt | cut -d '=' -f 2 | cut -d '.' -f 1 || return 1
 }
 
 function get_oldest_full_backup()
@@ -532,6 +535,11 @@ function get_oldest_full_backup()
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	ls | head -n 1
+}
+
+function header()
+{
+	write_out "MyTJRSRman - TJRS Backup Utility for MySQL - Release $RELEASE - Host $MYHOST"
 }
 
 function kill_pid()
@@ -553,7 +561,25 @@ function kill_pid()
 
 function list()
 {
+	LIST_REMOTE_HOST=
+	local OPTIND l_opt
+	while getopts "r:" l_opt; do
+		case $l_opt in
+			r)
+				LIST_REMOTE_HOST=${OPTARG}
+				;;
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
 	CMD=$1
+	if [ -n "$LIST_REMOTE_HOST" ]; then
+		list_remote $CMD || return 1
+		return
+	fi
 	case $CMD in
 		full)
 			list_full || return 1
@@ -562,7 +588,7 @@ function list()
 			list_binlog || return 1
 			;;
 		*)
-			version
+			usage
 			return 1
 			;;
 	esac
@@ -584,6 +610,11 @@ function list_binlog()
 	done
 }
 
+function list_binlog_remote
+{
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c ${CONFIG_FILE} list binlog
+}
+
 function list_full()
 {
 	cd "$BASE_BACKUP_DIR" || return 1
@@ -596,6 +627,30 @@ function list_full()
 		TIME=${TIME//-/:}
 		echo -e $DATE '\t' $TIME
 	done
+}
+
+function list_full_remote
+{
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c $CONFIG_FILE list full
+}
+
+function list_remote
+{
+	REMOTE_USER=`whoami`
+	REMOTE_INST=`echo $REMOTE_HOST | cut -d . -f 1`
+	CONFIG_FILE=/etc/mytjrsrman.conf
+	if [ -n "$REMOTE_INST" ]; then
+		CONFIG_FILE=/etc/mytjrsrman/${REMOTE_INST}.conf 
+	fi
+	CMD=$1
+	case $CMD in
+		full)
+			list_full_remote || return 1
+			;;
+		binlog)
+			list_binlog_remote || return 1
+			;;
+	esac
 }
 
 function mount_credentials_opt()
@@ -750,7 +805,7 @@ function query()
 			query_backup_age || return 1
 			;;
 		*)
-			version
+			usage
 			;;
 	esac
 }
@@ -1218,7 +1273,7 @@ function backup()
 			backup_binlog || return 1
 			;;
 		*)
-			version
+			usage
 			return 1
 			;;
 	esac
@@ -1308,11 +1363,13 @@ function run()
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
 	USE_AUX_INSTANCE=0
+	MYHOST=`hostname`
 	case $CMD in
 		query)
 			query $* || return 1
 			;;
 		backup)
+			header
 			check_lock_file || return 1
 			if ! backup $*; then
 				remove_lock_file
@@ -1336,8 +1393,10 @@ function run()
 			fi
 			;;
 		*)
-			version
-			echo "Invalid command: $CMD" >&2
+			usage
+			if [ -n "$CMD" ]; then
+				echo "Invalid command: $CMD" >&2
+			fi
 			return 1
 			;;
 	esac
@@ -1345,8 +1404,7 @@ function run()
 	#if bg mode
 	if [ $BG_MODE -eq 1 ]; then
 		#remove old logs
-		find "$LOG_DIR" -mtime +60 -delete
-
+		find "$LOG_DIR" -mtime +30 -delete
 		write_out "Finished"
 	fi
 }
@@ -1383,10 +1441,12 @@ function uncompress_backup()
 	tar -C "${BASE_BACKUP_DIR}" -x -z -f "${TAR_FILE}" || return 1
 }
 
-function version()
+function usage()
 {
-	echo "MyTJRSRman - TJRS Backup Utility for MySQL - Release $RELEASE"
-	echo "Manual: man mytjrsrman"
+	echo "Usage:"
+	echo "mytjrsrman [-b] backup full|binlog"
+	echo "mytjrsrman [-y] <restore options> restore"
+	echo "mytjrsrman [-b] list [-h <hostname> [-P <port>]] full|binlog"
 }
 
 function write_out()
@@ -1408,7 +1468,7 @@ NOW_EPOCH=`date +%s`
 DATE_VAL=`date +%Y-%m-%d`
 TIME_VAL=`date +%H:%M:%S`
 if [ $# -lt 1 ]; then
-	version
+	usage
 	exit
 fi
 MAX_READ_THREADS=20
@@ -1448,7 +1508,7 @@ BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 RESTORE_BACKUP_DIR="$BACKUP_DIR/restore"
 if [ $BG_MODE -eq 1 ]; then
 	TIMESTAMP=`date +%Y-%m-%d`
-	LOG_FILE="`mktemp \"${LOG_DIR}/${TIMESTAMP}.XXXXXX.log\"`" || exit 1
+	LOG_FILE="`mktemp \"${LOG_DIR}/${MYHOST}.${TIMESTAMP}.XXXXXX.log\"`" || exit 1
 fi
 run $*
 RETCODE=$?

@@ -30,8 +30,6 @@ RETENTION_PERIOD: Backup retention period (days).
 
 WRITE_THREADS: Number of threads for writing tasks. Default: 1. Max: 20.
 
-XAG_INSTANCE_NAME: MySQL instance name registered in XAG (Oracle Clusterware). Leave empty if your installation do not use Clusterware.
-
 .SH EXAMPLE
 
 AUX_BASEDIR=/mnt/backup/mysqldb1
@@ -47,8 +45,6 @@ LOCK_FILE=/var/lib/mytjrsrman.lock
 #MYSQL_CONF_FILE= #Use the default path
 
 RETENTION_PERIOD=20
-
-XAG_INSTANCE_NAME=mysqldb1
 
 READ_THREADS=5
 
