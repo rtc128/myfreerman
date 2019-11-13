@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.13
+RELEASE=1.3.14
 
 function apply_binlog()
 {
@@ -1009,7 +1009,7 @@ function restore()
 		write_out "Cannot find readable file '$MYSQL_CONF_FILE'"
 		return 1
 	fi
-	check_backup_consistency || return 1
+	#check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
@@ -1332,8 +1332,9 @@ function backup_full()
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
-	check_backup_consistency
+	#check_backup_consistency
 	if [ $RETCODE -ne 0 ]; then
+		rm -fr "${DIRECTORY}"
 		return 1
 	fi
 	cd "$BASE_BACKUP_DIR" || return 1
