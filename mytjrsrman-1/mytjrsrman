@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.11
+RELEASE=1.3.13
 
 function apply_binlog()
 {
@@ -612,7 +612,7 @@ function list_binlog()
 
 function list_binlog_remote
 {
-	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c ${CONFIG_FILE} list binlog
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c /etc/mytjrsrman/${LIST_REMOTE_HOST}.conf list binlog
 }
 
 function list_full()
@@ -631,7 +631,7 @@ function list_full()
 
 function list_full_remote
 {
-	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c $CONFIG_FILE list full
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c /etc/mytjrsrman/${LIST_REMOTE_HOST}.conf list full
 }
 
 function list_remote
