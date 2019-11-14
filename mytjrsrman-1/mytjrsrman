@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.16
+RELEASE=1.3.17
 
 function apply_binlog()
 {
@@ -1193,6 +1193,12 @@ function restore_target_instance()
 		if [ -n "$BINLOG_INDEX" ]; then
 			if [ -n "$MYSQLD_USER" ]; then
 				chown $MYSQLD_USER "$BINLOG_INDEX" || return 1
+			fi
+		fi
+		if [ -n "$BINLOG_DIR" ]; then
+			if [ -n "$MYSQLD_USER" ]; then
+				chown $MYSQLD_USER "$BINLOG_DIR" || return 1
+				chown $MYSQLD_USER "$BINLOG_DIR"/* || return 1
 			fi
 		fi
 	fi
