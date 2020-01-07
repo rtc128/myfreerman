@@ -1,10 +1,11 @@
 #!/bin/bash
-RELEASE=1.3.18
+RELEASE=1.3.19
 
 function apply_binlog()
 {
-	CONFIG="$1"
-	FILENAME="$2"
+	LOGSEQ="$1"
+	CONFIG="$2"
+	FILENAME="$3"
 	CRED_OPT=`mount_target_credentials_opt`
 	if ! mysql --defaults-file="$CONFIG" $CRED_OPT <"$FILENAME"; then
 		ITYPE="restricted"
@@ -17,6 +18,9 @@ function apply_binlog()
 	#rotate binlogs
 	CRED_OPT=`mount_target_credentials_opt`
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
+	CUR_BINLOG=`tail "$BINLOG_INDEX"` || return 1
+	BN="`basename \"$CUR_BINLOG\"`" || return 1
+	purge_binlogs $BN || return 1
 }
 
 function binlog_backup_exists()
@@ -892,12 +896,12 @@ function recover()
 		ITYPE="aux"
 	fi
 	mysql_start "$CONFIG" $ITYPE || return 1
-	write_out "Applying binary log $LOGSEQ"
+	write_out "Applying binary log sequence $LOGSEQ"
 	if ! read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL $RECOVER_DB; then
 		mysql_stop "$CONFIG" $ITYPE
 		return 1
 	fi
-	apply_binlog "$CONFIG" $TMP_SQL || return 1
+	apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL || return 1
 
 	LOGSEQ=`expr $LOGSEQ + 1`
 	while binlog_backup_exists $LOGSEQ; do
@@ -905,7 +909,7 @@ function recover()
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log $LOGSEQ"
 		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
-		apply_binlog "$CONFIG" $TMP_SQL || return 1
+		apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL || return 1
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
 	rm $TMP_SQL
@@ -1456,7 +1460,7 @@ function usage()
 {
 	echo "Usage:"
 	echo "mytjrsrman [-b] backup full|binlog"
-	echo "mytjrsrman [-y] <restore options> restore"
+	echo "mytjrsrman [-b] [-y] <restore options> restore"
 	echo "mytjrsrman [-b] list [-h <hostname> [-P <port>]] full|binlog"
 }
 
