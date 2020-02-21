@@ -8,15 +8,17 @@ mytjrsrman \- administer mysql backups
 
 .SH SYNOPSIS
 
-mytjrsrman [ -c <config> ] [ -b ] [ -y ] <command> [ <command options and arguments ...> ]
+mytjrsrman [ -c <config> ] [ -b ] <command> [ <command options and arguments ...> ]
 
 .B commands
 
-backup full | binlog
+backup full [-n] | binlog
+
+init
 
 list [ -r <remote server> ] full | binlog
 
-restore [ -n ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <database> [ -x <database> ] | [ -t <database1.table1> [ -t <database2.table2> [ ... ] ] ] ]
+restore [ -y ] [ -n ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <database> [ -x <database> ] | [ -t <database1.table1> [ -t <database2.table2> [ ... ] ] ] ]
 
 .SH DESCRIPTION
 
@@ -34,17 +36,30 @@ It adds support for:
 
 - Recovery window maintenance
 
+- Creating a new database directory structure
+
 .SH OPTIONS
 
 -c Use another configuration file, and not the default /etc/mytjrsrman.conf.
 
 -b Instead printing output to standard output, print to log file.
 
--y Assume YES to confirmations.
 
 .B backup
 
 Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
+
+	full: database full backup
+
+		-n: do not backup binlogs after finishing full backup. This can be used when mounting a master-slave environment.
+	
+
+	binlog: backup binary logs
+
+
+.B init
+
+Create directories required to hold a new database - according to MySQL configuration parameters.
 
 .B list
 
@@ -68,6 +83,10 @@ Server config file must exist.
 	-x Restore only a specific schema, but with a new name. Requires -d.
 
 	-t Restore only specific table(s). Cannot be used with -d.
+
+	-s Slave mode: do not apply binlogs after restoration. Needed when mounting a slave server.
+	
+	-y Assume YES to confirmation.
 
 .SH SEE ALSO
 
