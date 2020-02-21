@@ -1403,10 +1403,10 @@ function backup()
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld datadir`" || return 1
 	case $CMD in
 		full)
-			backup_full || return 1
+			backup_full $* || return 1
 			;;
 		binlog)
-			backup_binlog || return 1
+			backup_binlog $* || return 1
 			;;
 		*)
 			usage
@@ -1451,6 +1451,7 @@ function backup_binlog()
 function backup_full()
 {
 	IGNORE_BINLOGS=0
+	local OPTIND l_opt
 	while getopts "n" opt; do
 		case $opt in
 			n)
@@ -1635,7 +1636,7 @@ READ_THREADS=1
 WRITE_THREADS=1
 CONFIG_FILE=/etc/mytjrsrman.conf
 READ_ONLY=0
-while getopts "byc:" opt; do
+while getopts "bc:" opt; do
 	case $opt in
 		b)
 			BG_MODE=1
