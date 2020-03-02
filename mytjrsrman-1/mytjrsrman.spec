@@ -33,6 +33,10 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
+* Mon Mar 2 2020 Rodrigo Tassinari 1.3.22
+	- Fix in PITR
+	- When restoring in slave mode, print out binlog position
+
 * Fri Feb 21 2020 Rodrigo Tassinari 1.3.21
 	- Minor fixes
 

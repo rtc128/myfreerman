@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.20
+RELEASE=1.3.22
 
 function apply_binlog()
 {
@@ -167,6 +167,7 @@ function check_new_db_name()
 
 function check_target_instance_config()
 {
+	START_TIMEOUT=30
 	write_out "Checking target instance configuration"
 	LOG_ERROR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_error 2>/dev/null`"
 	if [ -z "$LOG_ERROR" ]; then
@@ -187,29 +188,16 @@ function check_target_instance_config()
 	grep -v "^audit" "$MYSQL_CONF_FILE" >$TMP_CONF || return 1
 	if ! mysqld --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
 		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
+		drop_target_database
 		return 1
 	fi
 	mysqld --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 &
-	sleep 15
-	SUCCESS=1
-	if ! [ -f "$PID_FILE" ]; then
-		SUCCESS=0
-	else
-		PID=`cat "$PID_FILE"`
-		if ! kill -0 $PID; then
-			SUCCESS=0
-		fi
-	fi
-	if [ $SUCCESS -eq 1 ]; then
-		if ! kill_pid "$PID_FILE"; then
-			write_out "Timeout reached waiting for target instance to shutdown. PID file: '$PID_FILE'. Log file: '$LOG_ERROR'."
-			return 1
-		fi
-	else
+	if ! wait_server_start "$TMP_CONF"; then
 		write_out "Cannot check target instance configuration. Check server logs in '$LOG_ERROR'."
 		drop_target_database
 		return 1
 	fi
+	kill_pid "$PID_FILE"
 	rm $TMP_CONF
 	drop_target_database || return 1
 }
@@ -248,7 +236,6 @@ function confirm_operation()
 
 function consistent_backup()
 {
-	BKP_TS="$1"
 	TMP_BKP_DIR="$1"
 	TMP_BACKUP_VARS="$TMP_BKP_DIR/meta/backup_variables.txt"
 	if ! [ -f "$TMP_BACKUP_VARS" ]; then
@@ -1083,6 +1070,12 @@ function restore()
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	SLAVE=0
 	ANSWER_YES=0
+	cd "$BASE_BACKUP_DIR" || return 1
+	DIR=`ls | tail -n 1 | cut -d . -f 1`
+	if [ -z "$DIR" ]; then
+		write_out "No backup to be restored"
+		return 1
+	fi
 	local OPTIND l_opt
 	while getopts "np:d:st:x:y" l_opt; do
 		case $l_opt in
@@ -1132,12 +1125,6 @@ function restore()
 	MOMENT=`date +%Y%m%d-%H%M%S`
 	AUX_SOCKET_OPT=
 	if ! [ -d "$BASE_BACKUP_DIR" ]; then
-		write_out "No backup to be restored"
-		return 1
-	fi
-	cd "$BASE_BACKUP_DIR" || return 1
-	DIR=`ls | tail -n 1 | cut -d . -f 1`
-	if [ -z "$DIR" ]; then
 		write_out "No backup to be restored"
 		return 1
 	fi
@@ -1204,6 +1191,7 @@ function restore()
 		restore_aux_instance $DIR || return 1
 	fi
 	if [ $SLAVE -eq 1 ]; then
+		show_binlog_position $DIR
 		return
 	fi
 	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" || return 1
@@ -1227,16 +1215,17 @@ function restore()
 
 function restore_aux_instance()
 {
-	DIR=$1
+	DIR="${BASE_BACKUP_DIR}/${1}"
 	create_aux_config $DIR || return 1
 	rm -fr "$AUX_DATADIR/*" || return 1
 	mkdir -p $AUX_DATADIR || return 1
 	LIM_MEM_OPT=`mount_limit_memory_option`
+	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR $LIM_MEM_OPT copy-back 2>&1 || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back 2>&1 || return 1
 	else
-		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1
+		mysqlbackup --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 	chown -R mysql $AUX_DATADIR || return 1
@@ -1244,7 +1233,7 @@ function restore_aux_instance()
 
 function restore_target_instance()
 {
-	DIR="$1"
+	DIR="${1}"
 	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" mysqld user`" 2>/dev/null
 	#if server is running, abort
 	if mysqladmin --defaults-file="$MYSQL_CONF_FILE" ping >/dev/null 2>&1; then
@@ -1299,11 +1288,12 @@ function restore_target_instance()
 	check_empty_target_database || return 1
 	check_target_instance_config || return 1
 	LIM_MEM_OPT=`mount_limit_memory_option`
+	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR $LIM_MEM_OPT copy-back 2>&1 || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back 2>&1 || return 1 
 	else
-		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir=$DIR $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1 
+		mysqlbackup --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
 	if [ -n "$MYSQLD_USER" ]; then
@@ -1358,6 +1348,16 @@ function restore_validate_tablenames()
 			return 1
 		fi
 	done
+}
+
+function show_binlog_position()
+{
+	BACKUP=$1
+	NAME=`get_base_backup_binlog_name $BACKUP` || return 1
+	POS=`get_base_backup_binlog_position $BACKUP` || return 1
+	write_out "Backup binary log information:"
+	write_out "   Name: $NAME"
+	write_out "   Position: $POS"
 }
 
 function validate_config()
@@ -1605,6 +1605,26 @@ function usage()
 	echo "mytjrsrman [-b] [ -c <config file> ] backup full|binlog"
 	echo "mytjrsrman [-b] [ -c <config file> ] restore [ <restore options> ]"
 	echo "mytjrsrman [-b] [ -c <config file> ] list [-h <hostname> [-P <port>]] full|binlog"
+}
+
+function wait_server_start()
+{
+	TIMEOUT=20
+	CONF_FILE="$1"
+	LOG_ERROR="`crudini --get \"$CONF_FILE\" mysqld log_error 2>/dev/null`"
+	PID_FILE="`crudini --get \"$CONF_FILE\" mysqld pid_file 2>/dev/null`"
+	sleep 2
+	COUNT=0
+	while [ $COUNT -lt $TIMEOUT ]; do
+		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
+			return 0
+		fi
+		if ! [ -f "$PID_FILE" ]; then
+			return 1
+		fi
+		sleep 2
+		COUNT=$((COUNT + 2))
+	done
 }
 
 function write_out()
