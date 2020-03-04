@@ -24,6 +24,8 @@ MAX_MEM: Max memory Enterprise Backup is allowed to use - in Mb. DEFAULT: 300.
 
 MYSQL_CONF_FILE: Path to MySQL config file - default: /etc/my.cnf.
 
+PURGE_BINLOGS: 0 to keep binlogs in database directory after backing them up. 1 to purge just after backup. 0 is useful for mounting master-slave installations. Default: 1.
+
 READ_ONLY: 1 to avoid making backups - default: 0. Useful for safety when an instance is always only a copy from another one.
 
 READ_THREADS: Number of threads for reading tasks. Default: 1. Max: 20.

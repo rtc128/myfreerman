@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.22
+RELEASE=1.3.23
 
 function apply_binlog()
 {
@@ -993,7 +993,7 @@ function recover()
 	while binlog_backup_exists $LOGSEQ; do
 		rm $TMP_SQL || return 1
 		touch $TMP_SQL || return 1
-		write_out "Applying binary log $LOGSEQ"
+		write_out "Applying binary log sequence $LOGSEQ"
 		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
 		apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL || return 1
 		LOGSEQ=`expr $LOGSEQ + 1`
@@ -1390,7 +1390,6 @@ function backup()
 	fi
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
-	#get datadir
 	BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin`" 2>/dev/null
 	if [ -z "$BINLOG_MASK" ]; then
 		BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log-bin`" 2>/dev/null
@@ -1417,52 +1416,72 @@ function backup()
 
 function backup_binlog()
 {
+	local OPTIND l_opt
+	while getopts "" opt; do
+		case $opt in
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				usage
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if  [ $# -ne 0 ]; then
+		usage
+		return 1
+	fi
 	cd "$BACKUP_DIR" || return 1
 	if ! exist_base_backup; then
 		echo "No full backup was previously done" >&2
 		return 1
 	fi
 	CRED_OPT=`mount_target_credentials_opt`
-	BINLOG_INDEX="`mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e \"select @@log_bin_index\" | column -t | tail -n 1`" || return 1
-	if [ -z "$BINLOG_INDEX" ]; then
-		return 1
-	fi
-	cd "$BACKUP_DIR" || return 1
-	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
-	cd "$BINLOG_DIR" || return 1
-	#while there are more than one binlog
-	COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
-	while [ $COUNT -gt 1 ]; do
-		F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
-		#next log
-		N="`head -n 2 \"$BINLOG_INDEX\" | tail -n 1`" || return 1
-		backup_one_binlog "$F" "$N" || return 
-		COUNT=`cat "$BINLOG_INDEX" | wc -l` || return 1
-	done
-	#flush logs and backup the last one
+
+	#flush logs
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
-	#cur
-	F="`head -n 1 \"$BINLOG_INDEX\"`" || return 1
-	#next
-	N="`head -n 2 \"$BINLOG_INDEX\" | tail -n 1`" || return 1
-	backup_one_binlog "$F" "$N" || return 
+
+	#list binlogs, just ignoring the last one
+	LIST_FILE=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || return 1
+	TOTAL=`cat $LIST_FILE | wc -l` || return 1
+	COUNT=$((TOTAL - 1))
+	LIST=`head -n $COUNT $LIST_FILE`
+	LAST_BINLOG=`tail -n 1 $LIST_FILE`
+	rm $LIST_FILE
+	for BINLOG in $LIST; do
+		if ! [ -f "$BINLOG_BACKUP_DIR/${BINLOG}.gz" ]; then
+			LONG_LOGSEQ=`echo $BINLOG | cut -d . -f 2`
+			LOGSEQ=`expr $LONG_LOGSEQ + 0`
+			write_out "Saving binary log sequence $LOGSEQ"
+			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" || return 1
+		fi
+		if [ $PURGE_BINLOGS -eq 1 ]; then
+			purge_binlogs $BINLOG || return 1
+		fi
+	done
+	if [ $PURGE_BINLOGS -eq 1 ]; then
+		purge_binlogs $LAST_BINLOG || return 1
+	fi
 }
 
 function backup_full()
 {
-	IGNORE_BINLOGS=0
 	local OPTIND l_opt
-	while getopts "n" opt; do
+	while getopts "" opt; do
 		case $opt in
-			n)
-				IGNORE_BINLOGS=1
-				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
+				usage
+				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
+	if  [ $# -ne 0 ]; then
+		usage
+		return 1
+	fi
 	CRED_OPT=`mount_credentials_opt` || return 1
 	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
@@ -1493,25 +1512,8 @@ function backup_full()
 	write_out "Saving mytjrsrman config file"
 	cp "$CONFIG_FILE" "$DIRECTORY/mytjrsrman.conf" || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
-	if [ $IGNORE_BINLOGS -eq 0 ]; then
-		backup_binlog || return 1
-	fi
+	backup_binlog || return 1
 	remove_old_backups || return 1
-}
-
-function backup_one_binlog()
-{
-	#file
-	F="$1"
-	BF="`basename \"$F\"`" || return 1
-	#next
-	N="$2"
-	BN="`basename \"$N\"`" || return 1
-	LOGSEQ=`echo $BF | cut -d . -f 2`
-	LOGSEQ=`expr $LOGSEQ + 0`
-	write_out "Saving binary log sequence $LOGSEQ"
-	gzip -c9 "$F" >$BINLOG_BACKUP_DIR/${BF}.gz || return 1
-	purge_binlogs "$BN" || return 1
 }
 
 function run()
@@ -1656,6 +1658,7 @@ READ_THREADS=1
 WRITE_THREADS=1
 CONFIG_FILE=/etc/mytjrsrman.conf
 READ_ONLY=0
+PURGE_BINLOGS=1
 while getopts "bc:" opt; do
 	case $opt in
 		b)

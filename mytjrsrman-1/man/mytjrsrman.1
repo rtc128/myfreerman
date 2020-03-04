@@ -12,7 +12,7 @@ mytjrsrman [ -c <config> ] [ -b ] <command> [ <command options and arguments ...
 
 .B commands
 
-backup full [-n] | binlog
+backup full | binlog
 
 init
 
@@ -51,8 +51,6 @@ Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
 
 	full: database full backup
 
-		-n: do not backup binlogs after finishing full backup. This can be used when mounting a master-slave environment.
-	
 
 	binlog: backup binary logs
 
