@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.3.23
+RELEASE=1.3.24
 
 function apply_binlog()
 {
@@ -106,6 +106,8 @@ function check_empty_target_database()
 		write_out "Data directory [$DATADIR] must be empty"
 		return 1
 	fi
+
+	#check there is no binary log
 	if [ -n "$BINLOG_MASK" ] && ls "$BINLOG_MASK"* >/dev/null 2>&1; then
 		write_out "No binary logs [${BINLOG_MASK}*] might exist"
 		return 1
@@ -114,6 +116,18 @@ function check_empty_target_database()
 	#binlog index file must not exist
 	if [ -n "$BINLOG_INDEX" -a -f "$BINLOG_INDEX" >/dev/null 2>&1 ]; then
 		write_out "Binary log index [$BINLOG_INDEX] must not exist"
+		return 1
+	fi
+
+	#check there is no relay log
+	if [ -n "$RELAY_LOG_MASK" ] && ls "$RELAY_LOG_MASK"* >/dev/null 2>&1; then
+		write_out "No relay logs [${RELAY_LOG_MASK}*] might exist"
+		return 1
+	fi
+
+	#relay log index file must not exist
+	if [ -n "$RELAY_LOG_INDEX" -a -f "$RELAY_LOG_INDEX" ]; then
+		write_out "Relay log index [$RELAY_LOG_INDEX] must not exist"
 		return 1
 	fi
 }
@@ -592,6 +606,16 @@ function init()
 		fi
 	fi
 
+	#relay index file
+	RELAY_LOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld relay_log_index 2>/dev/null`"
+	if [ -n "$RELAY_LOG_INDEX" ]; then
+		DNAME="`dirname $RELAY_LOG_INDEX`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
+
 	#binlogs directory
 	BINLOG_PREFIX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
@@ -599,6 +623,16 @@ function init()
 		mkdir -p "$BINLOG_DIR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$BINLOG_DIR" || return 1
+		fi
+	fi
+
+	#relay logs directory
+	RELAY_LOG_PREFIX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld relay_log 2>/dev/null`"
+	if [ -n "$RELAY_LOG_PREFIX" ]; then
+		RELAY_LOG_DIR="`dirname $RELAY_LOG_PREFIX`" || return 1
+		mkdir -p "$RELAY_LOG_DIR" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$RELAY_LOG_DIR" || return 1
 		fi
 	fi
 
@@ -796,7 +830,7 @@ function mysql_start()
 	LOG_ERROR="`crudini --get \"$CONFIG\" mysqld log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONFIG\" mysqld pid_file 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-file=$CONFIG --bind-address=127.0.0.1 --console"
+	OPTS="--defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
 	sleep 5
@@ -1132,9 +1166,14 @@ function restore()
 	REDODIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld innodb_log_group_home_dir 2>/dev/null`"
 	UNDODIR="`crudini --get \"$MYSQL_CONF_FILE\" mysqld innodb_undo_directory 2>/dev/null`"
 	BINLOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin_index 2>/dev/null`"
+	RELAY_LOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" mysqld relay_log_index 2>/dev/null`"
 	BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_MASK" ]; then
 		BINLOG_DIR="`dirname $BINLOG_MASK`" || return 1
+	fi
+	RELAY_LOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" mysqld relay_log 2>/dev/null`"
+	if [ -n "$RELAY_LOG_MASK" ]; then
+		RELAY_LOG_DIR="`dirname $RELAY_LOG_MASK`" || return 1
 	fi
 
 	#secure files directory
@@ -1191,7 +1230,6 @@ function restore()
 		restore_aux_instance $DIR || return 1
 	fi
 	if [ $SLAVE -eq 1 ]; then
-		show_binlog_position $DIR
 		return
 	fi
 	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" || return 1
@@ -1305,16 +1343,17 @@ function restore_target_instance()
 		if [ -n "$UNDODIR" ]; then
 			chown -R $MYSQLD_USER "$UNDODIR" || return 1
 		fi
-		if [ -n "$BINLOG_INDEX" ]; then
-			if [ -n "$MYSQLD_USER" ]; then
-				chown $MYSQLD_USER "$BINLOG_INDEX" || return 1
-			fi
+		if [ -n "$BINLOG_INDEX" -a -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$BINLOG_INDEX" || return 1
 		fi
-		if [ -n "$BINLOG_DIR" ]; then
-			if [ -n "$MYSQLD_USER" ]; then
-				chown $MYSQLD_USER "$BINLOG_DIR" || return 1
-				chown $MYSQLD_USER "$BINLOG_DIR"/* || return 1
-			fi
+		if [ -n "$BINLOG_DIR" -a -n "$MYSQLD_USER" ]; then
+			chown -R $MYSQLD_USER "$BINLOG_DIR" || return 1
+		fi
+		if [ -n "$RELAY_LOG_INDEX" -a -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$RELAY_LOG_INDEX" || return 1
+		fi
+		if [ -n "$RELAY_LOG_DIR" -a -n "$MYSQLD_USER" ]; then
+			chown -R $MYSQLD_USER "$RELAY_LOG_DIR" || return 1
 		fi
 	fi
 }
@@ -1348,16 +1387,6 @@ function restore_validate_tablenames()
 			return 1
 		fi
 	done
-}
-
-function show_binlog_position()
-{
-	BACKUP=$1
-	NAME=`get_base_backup_binlog_name $BACKUP` || return 1
-	POS=`get_base_backup_binlog_position $BACKUP` || return 1
-	write_out "Backup binary log information:"
-	write_out "   Name: $NAME"
-	write_out "   Position: $POS"
 }
 
 function validate_config()
