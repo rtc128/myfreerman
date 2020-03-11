@@ -1,13 +1,14 @@
 #!/bin/bash
-RELEASE=1.3.25
+RELEASE=1.4.0
 
 function apply_binlog()
 {
 	LOGSEQ="$1"
 	CONFIG="$2"
 	FILENAME="$3"
-	CRED_OPT=`mount_target_credentials_opt`
-	if ! mysql --defaults-file="$CONFIG" $CRED_OPT <"$FILENAME"; then
+	SOCKET="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION socket`" || return 1
+	CRED_OPT=`mount_target_credentials_opt "$CONFIG"`
+	if ! mysql --socket="$SOCKET" $CRED_OPT <"$FILENAME"; then
 		ITYPE="restricted"
 		if [ $USE_AUX_INSTANCE -eq 1 ]; then
 			ITYPE="aux"
@@ -16,11 +17,10 @@ function apply_binlog()
 		return 1
 	fi
 	#rotate binlogs
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
 	CUR_BINLOG=`tail "$BINLOG_INDEX"` || return 1
 	BN="`basename \"$CUR_BINLOG\"`" || return 1
-	purge_binlogs $BN || return 1
 }
 
 function binlog_backup_exists()
@@ -108,8 +108,8 @@ function check_empty_target_database()
 	fi
 
 	#check there is no binary log
-	if [ -n "$BINLOG_MASK" ] && ls "$BINLOG_MASK"* >/dev/null 2>&1; then
-		write_out "No binary logs [${BINLOG_MASK}*] might exist"
+	if [ -n "$BINLOG_BASENAME" ] && ls "$BINLOG_BASENAME"* >/dev/null 2>&1; then
+		write_out "No binary logs [${BINLOG_BASENAME}*] might exist"
 		return 1
 	fi
 
@@ -179,6 +179,18 @@ function check_new_db_name()
 	fi
 }
 
+function check_purge_binlogs()
+{
+	if [ -n "$SLAVE_SERVER" -a $USE_AUX_INSTANCE -eq 0 ]; then
+		LIMIT_LOG=`get_current_slave_binlog` || return 1
+	else
+		LIMIT_LOG=$1
+	fi
+	write_out "Purging binary logs (limit: $LIMIT_LOG)"
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
+	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
+}
+
 function check_target_instance_config()
 {
 	START_TIMEOUT=30
@@ -232,8 +244,8 @@ function check_target_instance_config()
 		write_out "Cannot find 'mysqld' executable file"
 		return 1
 	fi
-	TMP_LOG=`mktemp /tmp/mysqld.XXXXXX.log` || return 1
-	TMP_CONF=`mktemp /tmp/mysql.XXXXXX.cnf` || return 1
+	TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+	TMP_CONF=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
 	grep -v "^audit" "$MYSQL_CONF_FILE" >$TMP_CONF || return 1
 	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
 		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
@@ -299,21 +311,20 @@ function consistent_backup()
 
 function copy_recovered_db()
 {
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 	if [ -z "$RESTORE_DB_NEW_NAME" ]; then
 		RESTORE_DB_NEW_NAME=$RESTORE_DB_OLD_NAME
-		write_out "Dropping target database '$RESTORE_DB_NEW_NAME'"
+		write_out "Dropping target schema '$RESTORE_DB_NEW_NAME'"
 		mysql $CRED_OPT -e "drop database if exists $RESTORE_DB_NEW_NAME;" || return 1
 	fi
 	write_out "Copying recovered database from aux instance"
 	mysql $CRED_OPT -e "create database $RESTORE_DB_NEW_NAME;" >/dev/null || return 1
-	mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $RESTORE_DB_OLD_NAME | mysql $CRED_OPT $RESTORE_DB_NEW_NAME
-	stop_aux_instance
+	mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $RESTORE_DB_OLD_NAME | mysql $CRED_OPT $RESTORE_DB_NEW_NAME || return 1
 }
 
 function copy_restored_tables()
 {
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 	write_out "Copying restored tables from aux instance"
 	for QT in $RESTORE_TABLE_LIST; do
 		if ! echo "$QT" | grep \\. >/dev/null; then
@@ -327,9 +338,8 @@ function copy_restored_tables()
 		else
 			echo "[$TS]    ${QT}" >>"$LOG_FILE"
 		fi
-		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $SCHEMA $TABLE | mysql $CRED_OPT $SCHEMA
+		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $SCHEMA $TABLE | mysql $CRED_OPT $SCHEMA || return 1
 	done
-	stop_aux_instance
 }
 
 function create_aux_config()
@@ -344,29 +354,30 @@ function create_aux_config()
 		echo "'$MYSQL_CONF_FILE' is not a directory (or access is denied)" >&2
 		return 1
 	fi
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 	TARGET_BASEDIR=`mysql $CRED_OPT -e "show variables like 'basedir'" | tail -n 1 | cut -f 2 -d$'\t'`
 	LC_MESSAGES_DIR=`mysql $CRED_OPT -e "show variables like 'lc_messages_dir'" | tail -n 1 | cut -f 2 -d$'\t'`
-	echo "[$MYSQL_SERVER_INSTANCE]" >$AUX_CONFIG
-	echo "datadir=$AUX_DATADIR" >>$AUX_CONFIG
+	LOWER_CASE_TABLE_NAMES=`mysql $CRED_OPT -e "show variables like 'lower_case_table_names'" | tail -n 1 | cut -f 2 -d$'\t'`
+	echo "[$SERVER_INI_SECTION]" >$AUX_CONFIG
+	echo "datadir=${AUX_DATADIR}" >>$AUX_CONFIG
 	echo "explicit_defaults_for_timestamp=1" >>$AUX_CONFIG
 	echo "innodb_buffer_pool_size=10M" >>$AUX_CONFIG
 	echo "innodb_data_home_dir="$AUX_DATADIR >>$AUX_CONFIG
-	echo "innodb_log_group_home_dir=$AUX_DATADIR" >>$AUX_CONFIG
-	echo "innodb_undo_directory=$AUX_DATADIR" >>$AUX_CONFIG
+	echo "innodb_log_group_home_dir=$AUX_REDODIR" >>$AUX_CONFIG
+	echo "innodb_undo_directory=$AUX_UNDODIR" >>$AUX_CONFIG
 	echo "lc_messages_dir=$LC_MESSAGES_DIR" >>$AUX_CONFIG
 	echo "lc_messages=en_US" >>$AUX_CONFIG
+	echo "log_bin=${AUX_BINLOG_BASENAME}" >>$AUX_CONFIG
+	echo "log_bin_index=${AUX_BINLOG_INDEX}" >>$AUX_CONFIG
 	echo "log_error=$AUX_LOG_ERROR" >>$AUX_CONFIG
 	echo "log_timestamps=system" >>$AUX_CONFIG
+	echo "lower_case_table_names=$LOWER_CASE_TABLE_NAMES" >>$AUX_CONFIG
 	echo "max_allowed_packet=100M" >>$AUX_CONFIG
 	echo "pid_file=$AUX_PID_FILE" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
 	echo "skip-grant-tables=1" >>$AUX_CONFIG
 	echo "user=mysql" >>$AUX_CONFIG
-	if [ $MYSQL_VER -eq 8 ]; then
-		echo "mysqlx=off" >>$AUX_CONFIG
-	fi
 	echo "[mysql]" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
@@ -393,8 +404,8 @@ function drop_target_database()
 	if [ -n "$UNDODIR" ]; then
 		rm -fr "$UNDODIR"/* || return 1
 	fi
-	if [ -n "$BINLOG_MASK" ]; then
-		rm -f "$BINLOG_MASK"* || return 1
+	if [ -n "$BINLOG_BASENAME" ]; then
+		rm -f "$BINLOG_BASENAME"* || return 1
 	fi
 	if [ -n "$RELAY_LOG_MASK" ]; then
 		rm -f "$RELAY_LOG_MASK"* || return 1
@@ -554,11 +565,11 @@ function get_binlog_transaction_timestamp()
 	PLAIN_BINLOG=/$BINLOG
 	TMP_BINLOG=
 	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
-		TMP_BINLOG=`mktemp /tmp/tmp-binlog.XXXXXX` || return 1
+		TMP_BINLOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
 		PLAIN_BINLOG=$TMP_BINLOG
 		gunzip -c $BINLOG >$PLAIN_BINLOG
 	fi
-	TMP_SQL=`mktemp /tmp/tmp-sql.XXXXXX` || return 1
+	TMP_SQL=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
 	mysqlbinlog $PLAIN_BINLOG >$TMP_SQL || return 1
 	if [ -n "$TMP_BINLOG" ]; then
 		rm $TMP_BINLOG
@@ -581,6 +592,20 @@ function get_oldest_full_backup()
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	ls | head -n 1
+}
+
+function get_current_slave_binlog()
+{
+	SLAVE_HOSTNAME=`echo $SLAVE_SERVER | cut -d \: -f 1`
+	SLAVE_PORT=`echo $SLAVE_SERVER | cut -d \: -f 2`
+	if [ -z  "$SLAVE_PORT" ]; then
+		SLAVE_PORT=3306
+	fi
+	CRED_OPT=`mount_slave_credentials_opt`
+
+#before getting slave status, check if we can reach it
+	mysqladmin $CRED_OPT ping >/dev/null || return 1
+	mysql $CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //' || return 1
 }
 
 function header()
@@ -717,16 +742,16 @@ function init()
 	fi
 
 	#error log
-	LOG_ERROR_FILE="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
-	if [ -n "$LOG_ERROR_FILE" ]; then
-		DNAME="`dirname $LOG_ERROR_FILE`" || return 1
+	LOG_ERROR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
+	if [ -n "$LOG_ERROR" ]; then
+		DNAME="`dirname $LOG_ERROR`" || return 1
 		mkdir -p "$DNAME" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$DNAME" || return 1
 		fi
-		touch "$LOG_ERROR_FILE" || return 1
+		touch "$LOG_ERROR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
-			chown $MYSQLD_USER "$LOG_ERROR_FILE" || return 1
+			chown $MYSQLD_USER "$LOG_ERROR" || return 1
 		fi
 	fi
 }
@@ -853,10 +878,24 @@ function mount_limit_memory_option()
 	fi
 }
 
-function mount_target_credentials_opt()
+function mount_slave_credentials_opt()
 {
 	RESULT=
-	SOCKET="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION socket`" || return 1
+	RESULT="--host=$SLAVE_HOSTNAME --port=$SLAVE_PORT"
+	if [ -n "$DB_USERNAME" ]; then
+		RESULT="$RESULT --user=$DB_USERNAME"
+	fi
+	if [ -n "$DB_PASSWORD" ]; then
+		RESULT="$RESULT --password=$DB_PASSWORD"
+	fi
+	echo -n "$RESULT"
+}
+
+function mount_target_credentials_opt()
+{
+	CONFIG="${1}"
+	RESULT=
+	SOCKET="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION socket`" || return 1
 	if [ -n "$SOCKET" ]; then
 		RESULT="$RESULT --socket=$SOCKET"
 	fi
@@ -909,37 +948,6 @@ function mysql_start()
 	return 1
 }
 
-function mysql_start_aux()
-{
-	START_TIMEOUT=120
-	write_out "Starting aux instance"
-	CMD="mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG"
-	$CMD &
-	sleep 2
-	COUNT=2
-	while [ $COUNT -lt $START_TIMEOUT ]; do
-		sleep 1
-		COUNT=`expr $COUNT + 1`
-		if [ -f $AUX_LOG_ERROR ] && grep -w "\\[ERROR\\]" $AUX_LOG_ERROR >/dev/null; then
-			if [ -f $AUX_PID_FILE ]; then
-				PID=`cat $AUX_PID_FILE`
-				kill $PID
-			fi
-			echo "Cannot start aux instance. Please check log file $AUX_LOG_ERROR" >&2
-			return 1
-		fi
-		if [ -f $AUX_LOG_ERROR ] && grep -w "ready for connections" $AUX_LOG_ERROR >/dev/null; then
-			return
-		fi
-	done
-	if [ -f $AUX_PID_FILE ]; then
-		PID=`cat $AUX_PID_FILE`
-		kill $PID
-	fi
-	echo "Timeout reached waiting for aux instance to start. Please check log file $AUX_LOG_ERROR" >&2
-	return 1
-}
-
 function mysql_stop()
 {
 	CONFIG="$1"
@@ -972,13 +980,6 @@ function port_available()
 	return 0
 }
 
-function purge_binlogs()
-{
-	LIMIT_LOG=$1
-	CRED_OPT=`mount_target_credentials_opt` || return 1
-	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
-}
-
 function query()
 {
 	CMD=`echo $1 | awk '{print tolower($0)}'`
@@ -992,6 +993,7 @@ function query()
 			;;
 	esac
 }
+
 function query_backup_age()
 {
 	FULL=`query_full_backup_age` || return 1
@@ -1046,7 +1048,7 @@ function read_binlog()
 	PLAIN_BINLOG=$BINLOG
 	TMP_BINLOG=
 	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
-		TMP_BINLOG=`mktemp /tmp/tmp-binlog.XXXXXX`
+		TMP_BINLOG=`mktemp /tmp/mytjrsrman.XXXXXX`
 		PLAIN_BINLOG=$TMP_BINLOG
 		gunzip -c $BINLOG >$PLAIN_BINLOG || return 1
 	fi
@@ -1066,7 +1068,7 @@ function recover()
 	REQ_TIMESTAMP="$2"
 	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	CONFIG="$3"
-	CRED_OPT=`mount_target_credentials_opt` || return 1
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
@@ -1074,7 +1076,12 @@ function recover()
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		ITYPE="aux"
 	fi
-	mysql_start "$CONFIG" $ITYPE || return 1
+	if ! mysql_start "$CONFIG" $ITYPE; then
+		if [ $USE_AUX_INSTANCE -eq 1 ]; then
+			echo rm -fr "$AUX_BASEDIR"
+		fi
+		return 1
+	fi
 	write_out "Applying binary log sequence $LOGSEQ"
 	if ! read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL $RECOVER_DB; then
 		mysql_stop "$CONFIG" $ITYPE
@@ -1152,7 +1159,7 @@ function remove_old_full_backups()
 
 function reset_master()
 {
-	CRED_OPT=`mount_target_credentials_opt` || return 1
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
 	mysql --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT -e "reset master;" >/dev/null || return 1
 }
 
@@ -1226,9 +1233,9 @@ function restore()
 	UNDODIR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION innodb_undo_directory 2>/dev/null`"
 	BINLOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_bin_index 2>/dev/null`"
 	RELAY_LOG_INDEX="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION relay_log_index 2>/dev/null`"
-	BINLOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
-	if [ -n "$BINLOG_MASK" ]; then
-		BINLOG_DIR="`dirname $BINLOG_MASK`" || return 1
+	BINLOG_BASENAME="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
+	if [ -n "$BINLOG_BASENAME" ]; then
+		BINLOG_DIR="`dirname $BINLOG_BASENAME`" || return 1
 	fi
 	RELAY_LOG_MASK="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION relay_log 2>/dev/null`"
 	if [ -n "$RELAY_LOG_MASK" ]; then
@@ -1254,7 +1261,6 @@ function restore()
 		cd "$AUX_BASEDIR" || return 1
 		cd -
 		check_aux_binaries || return 1
-		check_aux_dir_space $DIR || return 1
 		if [ -z "$AUX_BASEDIR" ]; then
 			echo "When restoring a single database or a table, AUX_BASEDIR configuration must be set" >&2
 			return 1
@@ -1269,12 +1275,16 @@ function restore()
 		DB_COPY=1
 		AUX_CONFIG=/tmp/${BASENAME}.cnf
 		CONFIG="$AUX_CONFIG"
-		AUX_DATADIR="$AUX_BASEDIR/datadir"
-		AUX_LOG_ERROR="$AUX_BASEDIR/mysql.log"
+		AUX_BINLOG_BASENAME="${AUX_BASEDIR}/${BINLOG_BASENAME}"
+		AUX_BINLOG_INDEX="${AUX_BASEDIR}/${BINLOG_INDEX}"
+		AUX_DATADIR="$AUX_BASEDIR/${DATADIR}"
+		AUX_LOG_ERROR=`mktemp /tmp/mysql.XXXXXX.log`
 		AUX_PID_FILE="$AUX_BASEDIR/pid_file"
 		AUX_SOCKET="$AUX_BASEDIR/socket"
 		AUX_PORT=`find_aux_port` || return 1
+		AUX_REDODIR="${AUX_BASEDIR}/${REDODIR}"
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
+		AUX_UNDODIR="${AUX_BASEDIR}/${UNDODIR}"
 	fi
 	check_new_db_name || return 1
 	write_out "Starting restore"
@@ -1283,6 +1293,7 @@ function restore()
 		MODE=on
 	fi
 	write_out "Slave mode: $MODE"
+	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION user`" 2>/dev/null
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
 		restore_target_instance $DIR || return 1
 	else
@@ -1291,28 +1302,34 @@ function restore()
 	if [ $SLAVE -eq 1 ]; then
 		return
 	fi
+	ITYPE="restricted"
+	if [ $USE_AUX_INSTANCE -eq 1 ]; then
+		ITYPE="aux"
+	fi
 	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" ]; then
-		copy_recovered_db || return 1
+		copy_recovered_db || (mysql_stop "$CONFIG" $ITYPE && return 1)
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
-		copy_restored_tables || return 1
+		copy_restored_tables || (mysql_stop "$CONFIG" $ITYPE && return 1)
 	fi
 	if [ $PITR -eq 1 -a $DB_COPY -eq 0 ]; then
 		create_incarnation $MOMENT
 		write_out "Resetting binary logs"
 		reset_master || return 1
 	fi
-	ITYPE="restricted"
-	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		ITYPE="aux"
-	fi
 	mysql_stop "$CONFIG" $ITYPE
+
+	#if using aux instance, remove files
+	if [ $USE_AUX_INSTANCE -eq 1 ]; then
+		rm -fr "$AUX_BASEDIR"
+		rm "$AUX_LOG_ERROR"
+	fi
 }
 
 function restore_aux_instance()
 {
-	DIR="${BASE_BACKUP_DIR}/${1}"
+	DIR="${1}"
 	create_aux_config $DIR || return 1
 	rm -fr "$AUX_DATADIR/*" || return 1
 	mkdir -p $AUX_DATADIR || return 1
@@ -1320,18 +1337,33 @@ function restore_aux_instance()
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back 2>&1 || return 1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" 2>&1 || return 1
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" >>"$LOG_FILE" 2>&1 || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
-	chown -R mysql $AUX_DATADIR || return 1
+
+#===========================================
+#Rodrigo Tassinari - 2020-03-11
+#BUG in MEB 8.0.18:
+#Binary log index informed in --log-bin-index is appended a text ".index", and manual does not say that
+#So, we rename it
+	BUG_BINLOG_INDEX="${AUX_BINLOG_INDEX}.index" 
+	mv "$BUG_BINLOG_INDEX" "$AUX_BINLOG_INDEX" || return 1
+#===========================================
+
+	#create log file
+	touch "$AUX_LOG_ERROR" || return 1
+	#change ownership
+	if [ -n "$MYSQLD_USER" ]; then
+		chown $MYSQLD_USER "$AUX_LOG_ERROR" || return 1
+		chown -R $MYSQLD_USER "$AUX_BASEDIR" || return 1
+	fi
 }
 
 function restore_target_instance()
 {
 	DIR="${1}"
-	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION user`" 2>/dev/null
 	#if server is running, abort
 	if mysqladmin --defaults-file="$MYSQL_CONF_FILE" ping >/dev/null 2>&1; then
 		write_out "MySQL is running - aborting"
@@ -1388,11 +1420,19 @@ function restore_target_instance()
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ $BG_MODE -eq 0 ]; then
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back 2>&1 || return 1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" 2>&1 || return 1 
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back >>"$LOG_FILE" 2>&1 || return 1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$MYSQL_CONF_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" >>"$LOG_FILE" 2>&1 || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
+#===========================================
+#Rodrigo Tassinari - 2020-03-11
+#BUG in MEB 8.0.18:
+#Binary log index informed in --log-bin-index is appended a text ".index", and manual does not say that
+#So, we rename it
+	BUG_BINLOG_INDEX="${BINLOG_INDEX}.index" 
+	mv "$BUG_BINLOG_INDEX" "$BINLOG_INDEX" || return 1
+#===========================================
 	if [ -n "$MYSQLD_USER" ]; then
 		write_out "Setting permissions"
 		chown -R $MYSQLD_USER "$DATADIR" || return 1
@@ -1465,7 +1505,7 @@ function backup()
 		return 1
 	fi
 
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 	if [ $BG_MODE -eq 1 ]; then
 		if ! mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT ping >/dev/null 2>&1; then
 			write_out "No MySQL server running - ignoring backup"
@@ -1478,8 +1518,8 @@ function backup()
 	fi
 	CMD=`echo $1 | awk '{print tolower($0)}'`
 	shift
-	BINLOG_MASK=`mysql $CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
-	BINLOG_DIR="`dirname \"$BINLOG_MASK\"`" || return 1
+	BINLOG_BASENAME=`mysql $CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
+	BINLOG_DIR="`dirname \"$BINLOG_BASENAME\"`" || return 1
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION datadir`" || return 1
 	case $CMD in
 		full)
@@ -1517,7 +1557,7 @@ function backup_binlog()
 		echo "No full backup was previously done" >&2
 		return 1
 	fi
-	CRED_OPT=`mount_target_credentials_opt`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
 
 	#create binlog backup dir
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
@@ -1540,13 +1580,8 @@ function backup_binlog()
 			write_out "Saving binary log sequence $LOGSEQ"
 			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" || return 1
 		fi
-		if [ $PURGE_BINLOGS -eq 1 ]; then
-			purge_binlogs $BINLOG || return 1
-		fi
 	done
-	if [ $PURGE_BINLOGS -eq 1 ]; then
-		purge_binlogs $LAST_BINLOG || return 1
-	fi
+	check_purge_binlogs $LAST_BINLOG || return 1
 }
 
 function backup_full()
@@ -1566,7 +1601,7 @@ function backup_full()
 		usage
 		return 1
 	fi
-	CRED_OPT=`mount_target_credentials_opt` || return 1
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
 	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	DATE_VAL=`date +%Y-%m-%d`
@@ -1747,7 +1782,6 @@ READ_THREADS=1
 WRITE_THREADS=1
 CONFIG_FILE=/etc/mytjrsrman.conf
 READ_ONLY=0
-PURGE_BINLOGS=1
 while getopts "bc:" opt; do
 	case $opt in
 		b)

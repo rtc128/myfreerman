@@ -20,19 +20,29 @@ LOG_DIR: Log directory. Required when option -b is used.
 
 LOCK_FILE: Lock file path. Lock file is used to block simultaneous instances running.
 
-MAX_MEM: Max memory Enterprise Backup is allowed to use - in Mb. DEFAULT: 300.
+MAX_MEM: Max memory Enterprise Backup is allowed to use - in Mb.
+   DEFAULT: 300.
 
-MYSQL_CONF_FILE: Path to MySQL config file - default: /etc/my.cnf.
+MYSQL_CONF_FILE: Path to MySQL config file.
+   DEFAULT: /etc/my.cnf.
 
-PURGE_BINLOGS: 0 to keep binlogs in database directory after backing them up. 1 to purge just after backup. 0 is useful for mounting master-slave installations. Default: 1.
+MYSQL_SID: Server instance id - see https://dev.mysql.com/doc/refman/5.7/en/using-systemd.html#systemd-multiple-mysql-instances.
+   DEFAULT: Use default instance (section [mysqld] in server configuration).
 
-READ_ONLY: 1 to avoid making backups - default: 0. Useful for safety when an instance is always only a copy from another one.
+READ_ONLY: 1 to avoid making backups. Useful for safety when an instance is always only a copy from another one.
+   DEFAULT: 0
 
-READ_THREADS: Number of threads for reading tasks. Default: 1. Max: 20.
+READ_THREADS: Number of threads for reading tasks.
+   DEFAULT: 1.
 
 RETENTION_PERIOD: Backup retention period (days).
+	REQUIRED
 
-WRITE_THREADS: Number of threads for writing tasks. Default: 1. Max: 20.
+SLAVE_SERVER: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
+   DEFAULT: no slave is configured.
+
+WRITE_THREADS: Number of threads for writing tasks.
+   DEFAULT: 1.
 
 .SH EXAMPLE
 

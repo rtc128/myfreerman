@@ -1,6 +1,6 @@
 Name:           mytjrsrman
 Version:        1
-Release:        1.3.24
+Release:        1.4.0
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -32,6 +32,10 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/mytjrsrman.conf.8.gz
 
 %changelog
+
+* Wed Mar 11 2020 Rodrigo Tassinari 1.4.0
+	- Support for definition of a slave server: in binary log backup, only logs already applied to the slave are purged
+	- Support for multiple instances in the same server configuration file (systemd format using '@')
 
 * Mon Mar 5 2020 Rodrigo Tassinari 1.3.24
 	- Support for relay log configuration
