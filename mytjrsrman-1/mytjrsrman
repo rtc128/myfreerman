@@ -1,13 +1,13 @@
 #!/bin/bash
-RELEASE=1.4.0
+RELEASE=1.4.1
 
 function apply_binlog()
 {
 	LOGSEQ="$1"
 	CONFIG="$2"
 	FILENAME="$3"
-	SOCKET="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION socket`" || return 1
-	CRED_OPT=`mount_target_credentials_opt "$CONFIG"`
+	SOCKET="$4"
+	CRED_OPT=`mount_target_credentials_opt "$CONFIG" "$SOCKET"`
 	if ! mysql --socket="$SOCKET" $CRED_OPT <"$FILENAME"; then
 		ITYPE="restricted"
 		if [ $USE_AUX_INSTANCE -eq 1 ]; then
@@ -17,7 +17,7 @@ function apply_binlog()
 		return 1
 	fi
 	#rotate binlogs
-	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"`
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE" "$SOCKET"`
 	mysqladmin --defaults-file="$MYSQL_CONF_FILE" $CRED_OPT flush-logs || return 1
 	CUR_BINLOG=`tail "$BINLOG_INDEX"` || return 1
 	BN="`basename \"$CUR_BINLOG\"`" || return 1
@@ -632,8 +632,26 @@ function kill_pid()
 
 function init()
 {
+	#error log is required
+	LOG_ERROR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
+	if [ -z "$LOG_ERROR" ]; then
+		write_out "Configuration 'log_error' in server configuration is required"
+		return 1
+	fi
+
 	#mysqld user
 	MYSQLD_USER="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION user 2>/dev/null`"
+
+	#create log error file
+	DNAME="`dirname $LOG_ERROR`" || return 1
+	mkdir -p "$DNAME" || return 1
+	if [ -n "$MYSQLD_USER" ]; then
+		chown $MYSQLD_USER "$DNAME" || return 1
+	fi
+	touch "$LOG_ERROR" || return 1
+	if [ -n "$MYSQLD_USER" ]; then
+		chown $MYSQLD_USER "$LOG_ERROR" || return 1
+	fi
 
 	#datadir
 	DATADIR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION datadir`" 2>/dev/null
@@ -741,19 +759,31 @@ function init()
 		fi
 	fi
 
-	#error log
-	LOG_ERROR="`crudini --get \"$MYSQL_CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
-	if [ -n "$LOG_ERROR" ]; then
-		DNAME="`dirname $LOG_ERROR`" || return 1
-		mkdir -p "$DNAME" || return 1
-		if [ -n "$MYSQLD_USER" ]; then
-			chown $MYSQLD_USER "$DNAME" || return 1
-		fi
-		touch "$LOG_ERROR" || return 1
-		if [ -n "$MYSQLD_USER" ]; then
-			chown $MYSQLD_USER "$LOG_ERROR" || return 1
-		fi
+	echo -n "Please enter new password for root: "
+	read NEW_PASSWORD
+
+	#run initialize
+	write_out "Creating server repository"
+	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$MYSQL_CONF_FILE" --initialize; then
+		return 1
 	fi
+	LINE=`grep -w password "$LOG_ERROR" | tail -n 1`
+	PASSWORD=`echo ${LINE##* }`
+
+	mysql_start "$MYSQL_CONF_FILE" "init" || return 1
+
+	write_out "Running initial config commands"
+	#create tmp file with commands
+	SQL=`mktemp /tmp/mytjrsrman.XXXXXX`
+	echo "alter user root@localhost identified by '$NEW_PASSWORD';" >>$SQL
+	echo "update mysql.user set host = '%' where user = 'root' and host = 'localhost';" >>$SQL
+	echo "flush privileges;" >>$SQL
+	echo "grant backup_admin on *.* to root;" >>$SQL
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
+	mysql --connect-expired-password --socket=$MYSQL_SOCKET -u root "-p$PASSWORD" <$SQL
+
+	mysql_stop "$MYSQL_CONF_FILE" "init"
+	rm $SQL
 }
 
 function list()
@@ -894,8 +924,13 @@ function mount_slave_credentials_opt()
 function mount_target_credentials_opt()
 {
 	CONFIG="${1}"
+	#default socket is the one configured in rman config
+	SOCKET="$MYSQL_SOCKET"
+	if [ $# -gt 1 ]; then
+		SOCKET="${2}"
+	fi
+
 	RESULT=
-	SOCKET="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION socket`" || return 1
 	if [ -n "$SOCKET" ]; then
 		RESULT="$RESULT --socket=$SOCKET"
 	fi
@@ -922,17 +957,15 @@ function mysql_start()
 {
 	CONFIG="$1"
 	INST_TYPE="$2"
-
-	START_TIMEOUT=240
-
+	START_TIMEOUT=60
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	CMD="mysqld"
 	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
-	sleep 5
-	COUNT=5
+	sleep 1
+	COUNT=1
 	while [ $COUNT -lt $START_TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
@@ -952,14 +985,14 @@ function mysql_stop()
 {
 	CONFIG="$1"
 	INST_TYPE="$2"
-	STOP_TIMEOUT=30
+	STOP_TIMEOUT=60
 	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	write_out "Stopping server (${INST_TYPE})"
 	PID=`cat "$PID_FILE"`
 	kill $PID
-	sleep 3
-	COUNT=3
+	sleep 1
+	COUNT=1
 	while [ $COUNT -lt $STOP_TIMEOUT ]; do
 		if ! kill -0 $PID 2>/dev/null; then
 			return 0
@@ -1068,7 +1101,8 @@ function recover()
 	REQ_TIMESTAMP="$2"
 	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	CONFIG="$3"
-	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE"` || return 1
+	SOCKET="$4"
+	CRED_OPT=`mount_target_credentials_opt "$MYSQL_CONF_FILE" "$SOCKET"` || return 1
 	TMP_SQL=`mktemp /tmp/recover.XXXXXX.sql`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
@@ -1087,7 +1121,7 @@ function recover()
 		mysql_stop "$CONFIG" $ITYPE
 		return 1
 	fi
-	apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL || return 1
+	apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL "$SOCKET" || return 1
 
 	LOGSEQ=`expr $LOGSEQ + 1`
 	while binlog_backup_exists $LOGSEQ; do
@@ -1095,7 +1129,7 @@ function recover()
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log sequence $LOGSEQ"
 		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
-		apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL || return 1
+		apply_binlog $LOGSEQ "$CONFIG" $TMP_SQL "$SOCKET" || return 1
 		LOGSEQ=`expr $LOGSEQ + 1`
 	done
 	rm $TMP_SQL
@@ -1170,6 +1204,7 @@ function restore()
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	SLAVE=0
 	ANSWER_YES=0
+	CUR_SOCKET="$MYSQL_SOCKET"
 	cd "$BASE_BACKUP_DIR" || return 1
 	DIR=`ls | tail -n 1 | cut -d . -f 1`
 	if [ -z "$DIR" ]; then
@@ -1285,6 +1320,7 @@ function restore()
 		AUX_REDODIR="${AUX_BASEDIR}/${REDODIR}"
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
 		AUX_UNDODIR="${AUX_BASEDIR}/${UNDODIR}"
+		CUR_SOCKET="$AUX_SOCKET"
 	fi
 	check_new_db_name || return 1
 	write_out "Starting restore"
@@ -1306,7 +1342,7 @@ function restore()
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		ITYPE="aux"
 	fi
-	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" || return 1
+	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" "$CUR_SOCKET" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" ]; then
 		copy_recovered_db || (mysql_stop "$CONFIG" $ITYPE && return 1)
 	fi

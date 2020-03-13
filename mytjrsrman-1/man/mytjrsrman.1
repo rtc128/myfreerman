@@ -72,19 +72,19 @@ By default, after restoring a backup with PITR, a new backup incarnation is crea
 If you anytime wish to access this backupset again, you need to manually move contents from $BACKUP_DIR/restore/$CURRENT_TIMESTAMP to $BACKUP_DIR. See -n option.
 Server config file must exist.
 
-	-n Do not create a new backup incarnation. This is used for PITR accross different environments, such as restoring production backups in test servers.
+   -n Do not create a new backup incarnation. This is used for PITR accross different environments, such as restoring production backups in test servers.
 
-	-p Restore using a specific point in time - PITR.
+   -p Restore using a specific point in time - PITR.
 
-	-d Restore only a specific schema. Cannot be used with -t.
+   -d Restore only a specific schema. Cannot be used with -t.
 
-	-x Restore only a specific schema, but with a new name. Requires -d.
+   -x Restore only a specific schema, but with a new name. Requires -d.
 
-	-t Restore only specific table(s). Cannot be used with -d.
+   -t Restore only specific table(s). Cannot be used with -d.
 
-	-s Slave mode: do not apply binlogs after restoration. Needed when mounting a slave server.
-	
-	-y Assume YES to confirmation.
+   -s Slave mode: do not apply binlogs after restoration. Needed when mounting a slave server.
+   
+   -y Assume YES to confirmation.
 
 .SH SEE ALSO
 
