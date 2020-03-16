@@ -1,68 +1,73 @@
 .\" Manpage for mytjrsrman.
 
-.TH man 1 "mytjrsrman.conf man page"
+.TH man 8 "mytjrsrman.conf man page"
 
 .SH NAME
 
-mytjrsrman.conf \- mytjrsrman config file
+mytjrsrman.conf \- mytjrsrman configuration
 
 .SH DESCRIPTION
 
-AUX_BASEDIR: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
+mytjrsrman reads its configuration from a section in Mysql server's my.cnf configuration file. The default section name is "[mytjrsrman]". If you need more than one instance in the same host, use "[mytjrsrman@<sid>]" - where <sid> is Mysql server instance alias, and set MYSQL_SID before calling mytjrsrman. For example, use "[mytjrsrman@dev]" and set MYSQL_SID=dev. Configuration variables:
 
-DB_HOSTNAME: Database hostname - optional - mysql_config_editor can be used.
-
-DB_PASSWORD: Database password - optional - mysql_config_editor can be used.
-
-DB_USERNAME: Database username - optional - mysql_config_editor can be used.
-
-LOG_DIR: Log directory. Required when option -b is used.
-
-LOCK_FILE: Lock file path. Lock file is used to block simultaneous instances running.
-
-MAX_MEM: Max memory Enterprise Backup is allowed to use - in Mb.
-   DEFAULT: 300.
-
-MYSQL_CONF_FILE: Path to MySQL config file.
-   DEFAULT: /etc/my.cnf.
-
-MYSQL_SID: Server instance id - see https://dev.mysql.com/doc/refman/5.7/en/using-systemd.html#systemd-multiple-mysql-instances.
-   DEFAULT: Use default instance (section [mysqld] in server configuration).
-
-READ_ONLY: 1 to avoid making backups. Useful for safety when an instance is always only a copy from another one.
-   DEFAULT: 0
-
-READ_THREADS: Number of threads for reading tasks.
-   DEFAULT: 1.
-
-RETENTION_PERIOD: Backup retention period (days).
+aux_basedir: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
 	REQUIRED
 
-SLAVE_SERVER: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
+backup_directory: Directory where backups are going to be saved.
+	REQUIRED
+
+db_hostname: Database hostname - optional - mysql_config_editor can be used.
+
+db_password: Database password - optional - mysql_config_editor can be used.
+
+db_username: Database username - optional - mysql_config_editor can be used.
+
+log_dir: log directory. Required when option -b is used.
+
+lock_file: Lock file path. Lock file is used to block simultaneous instances running.
+	REQUIRED
+
+max_mem: max memory Enterprise Backup is allowed to use - in Mb.
+   DEFAULT: 300.
+
+read_only: 1 to avoid making backups. Useful for safety when an instance is always only a copy from another one.
+   DEFAULT: 0
+
+read_threads: Number of threads for reading tasks.
+   DEFAULT: 1.
+
+retention_period: Backup retention period (days).
+	REQUIRED
+
+slave_server: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
    DEFAULT: no slave is configured.
 
-WRITE_THREADS: Number of threads for writing tasks.
+write_threads: Number of threads for writing tasks.
    DEFAULT: 1.
 
 .SH EXAMPLE
 
-AUX_BASEDIR=/mnt/backup/mysqldb1
+==> Instance: tst
 
-#DB_PASSWORD= #none, use mysql_config_editor
+[mytjrsrman@tst]
 
-#DB_USERNAME= #none, use mysql_config_editor
+aux_basedir=/var/tmp/mysql.aux
 
-LOG_DIR=/var/log/mytjrsrman
+backup_directory=/mnt/backup
 
-LOCK_FILE=/var/lib/mytjrsrman.lock
+db_username=root
 
-#MYSQL_CONF_FILE= #Use the default path
+db_password=passwd1234
 
-RETENTION_PERIOD=20
+log_dir=/var/log/mytjrsrman
 
-READ_THREADS=5
+lock_file=/var/lib/mytjrsrman.lock
 
-WRITE_THREADS=5
+retention_period=20
+
+read_threads=5
+
+write_threads=5
 
 .SH SEE ALSO
 mytjrsrman(1)
