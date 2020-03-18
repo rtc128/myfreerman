@@ -8,7 +8,7 @@ mytjrsrman \- administer mysql backups
 
 .SH SYNOPSIS
 
-mytjrsrman [ -c <config> ] [ -b ] <command> [ <command options and arguments ...> ]
+mytjrsrman [ -c <config> ] [ -l <log file format> ] <command> [ <command options and arguments ...> ]
 
 .B commands
 
@@ -38,11 +38,16 @@ It adds support for:
 
 - Creating a new database directory structure
 
+.SH CONFIGURATION
+
+The default configuration section is \fBmysqld\fR for the server and \fBmytjrsrman\fR for mytjrsrman. You can define environment variable \fBMYSQL_SID\fR to change the section.
+Exemple: MYSQL_SID=dev => sections are mysqld@dev and mytjrsrman@dev.
+
 .SH OPTIONS
 
 -c Use another configuration file, and not the default /etc/my.cnf.
 
--b Instead printing output to standard output, print to log file.
+-l Print output to log file. Variables in format are the same as in "date" command.
 
 
 .B backup
@@ -57,7 +62,7 @@ Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
 
 .B init
 
-Create directories required to hold a new database - according to MySQL configuration parameters.
+Create a new server repository - according to MySQL configuration parameters.
 
 .B list
 

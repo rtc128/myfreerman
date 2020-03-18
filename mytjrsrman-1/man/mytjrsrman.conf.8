@@ -18,11 +18,13 @@ backup_directory: Directory where backups are going to be saved.
 
 db_hostname: Database hostname - optional - mysql_config_editor can be used.
 
+db_socket: Database socket path, for local mysql servers - optional - mysql_config_editor can be used.
+
 db_password: Database password - optional - mysql_config_editor can be used.
 
 db_username: Database username - optional - mysql_config_editor can be used.
 
-log_dir: log directory. Required when option -b is used.
+log_dir: log directory. Required when option -l is used.
 
 lock_file: Lock file path. Lock file is used to block simultaneous instances running.
 	REQUIRED
@@ -58,6 +60,8 @@ backup_directory=/mnt/backup
 db_username=root
 
 db_password=passwd1234
+
+db_socket=/var/lib/mysql/tmt.sock
 
 log_dir=/var/log/mytjrsrman
 
