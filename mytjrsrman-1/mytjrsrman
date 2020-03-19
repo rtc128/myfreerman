@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.3
+RELEASE=1.4.4
 
 function apply_binlog()
 {
@@ -37,7 +37,7 @@ function backup()
 	shift
 	BINLOG_BASENAME=`mysql $TARGET_CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
 	BINLOG_DIR="`dirname \"$BINLOG_BASENAME\"`" || return 1
-	DATADIR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION datadir`" || return 1
+	DATADIR=`mysql $TARGET_CRED_OPT -e "show variables like 'datadir'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
 	case $BKP_TYPE in
 		full)
 			backup_full $* || return 1
