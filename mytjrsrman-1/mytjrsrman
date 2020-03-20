@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.4
+RELEASE=1.4.5
 
 function apply_binlog()
 {
@@ -1103,7 +1103,7 @@ function mysql_start()
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off --skip-grant-tables"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
 	sleep 5
@@ -1463,7 +1463,7 @@ function restore()
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 		#target instance must be running
-		if ! mysqladmin  $TARGET_CRED_OPT ping >/dev/null; then
+		if ! mysqladmin $TARGET_CRED_OPT status >/dev/null 2>&1; then
 			write_out "Cannot connect to target instance"
 			return 1
 		fi
@@ -1754,7 +1754,6 @@ function restore_validate_tablenames()
 
 function run()
 {
-	header
 	CONFIG_FILE=/etc/my.cnf
 	LOG_FILE_BASENAME=
 	while getopts "l:c:" opt; do
@@ -1780,6 +1779,7 @@ function run()
 	if [ -n "$LOG_FILE_BASENAME" ]; then
 		LOG_FILE="${LOG_DIR}/$LOG_FILE_BASENAME"
 	fi
+	header
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	MYHOST=`hostname`
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
@@ -1850,12 +1850,12 @@ function usage()
 
 function wait_server_start()
 {
-	TIMEOUT=20
+	TIMEOUT=30
 	CONF_FILE="$1"
 	LOG_ERROR="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
-	sleep 2
-	COUNT=0
+	sleep 5
+	COUNT=5
 	while [ $COUNT -lt $TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
@@ -1863,8 +1863,8 @@ function wait_server_start()
 		if ! [ -f "$PID_FILE" ]; then
 			return 1
 		fi
-		sleep 2
-		COUNT=$((COUNT + 2))
+		sleep 1
+		COUNT=$((COUNT + 1))
 	done
 }
 
