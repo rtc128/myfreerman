@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.6
+RELEASE=1.4.7
 
 function apply_binlog()
 {
@@ -1269,10 +1269,10 @@ function read_config()
 	MAX_MEM="`crudini --get "$CONFIG_FILE" $INI_SECTION max_mem 2>/dev/null`"
 
 	#read only
-	READ_ONLY="`crudini --get "$CONFIG_FILE" $INI_SECTION READ_ONLY 2>/dev/null`"
-	#default: 1
+	READ_ONLY="`crudini --get "$CONFIG_FILE" $INI_SECTION read_only 2>/dev/null`"
+	#default: 0
 	if [ -z "${READ_ONLY}" ]; then
-		READ_ONLY=1
+		READ_ONLY=0
 	fi
 
 	#read threads
