@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.7
+RELEASE=1.4.8
 
 function apply_binlog()
 {
@@ -1621,7 +1621,7 @@ function restore_target_instance()
 {
 	DIR="${1}"
 	#if server is running, abort
-	if mysqladmin --defaults-file="$CONFIG_FILE" ping >/dev/null 2>&1; then
+	if mysqladmin --defaults-file="$CONFIG_FILE" --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX ping >/dev/null 2>&1; then
 		write_out "MySQL is running - aborting"
 		return 1
 	fi
