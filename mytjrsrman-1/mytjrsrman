@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.5
+RELEASE=1.4.6
 
 function apply_binlog()
 {
@@ -1103,7 +1103,7 @@ function mysql_start()
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off --skip-grant-tables"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
 	sleep 5
