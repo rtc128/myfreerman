@@ -1,6 +1,6 @@
 Name:           mytjrsrman
 Version:        1
-Release:        1.4.10
+Release:        1.4.11
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -34,6 +34,9 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/mytjrsrman.conf.8.gz
 
 %changelog
+
+* Tue Mar 31 2020 Rodrigo Tassinari 1.4.11
+- Fix in starting mysql instances
 
 * Tue Mar 31 2020 Rodrigo Tassinari 1.4.10
 - In restore, do not write log in backup folder - so backup FS can be mounted RO

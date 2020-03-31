@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.10
+RELEASE=1.4.11
 
 function apply_binlog()
 {
@@ -362,7 +362,7 @@ function check_purge_binlogs()
 
 function check_target_instance_config()
 {
-	START_TIMEOUT=30
+	START_TIMEOUT=60
 	write_out "Checking target instance configuration"
 
 	#create directory for binlog index
@@ -422,7 +422,8 @@ function check_target_instance_config()
 		return 1
 	fi
 	mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 &
-	if ! wait_server_start "$TMP_CONF"; then
+	PID=$!
+	if ! wait_server_start $PID "$TMP_CONF"; then
 		write_out "Cannot check target instance configuration. Check server logs in '$LOG_ERROR'."
 		drop_target_database
 		return 1
@@ -1101,18 +1102,18 @@ function mysql_start()
 	INST_TYPE="$2"
 	START_TIMEOUT=60
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
-	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	CMD="mysqld"
 	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS & >"$LOG_ERROR" 2>&1
+	PID=$!
 	sleep 5
 	COUNT=5
 	while [ $COUNT -lt $START_TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
 		fi
-		if ! [ -f "$PID_FILE" ]; then
+		if ! kill -0 $PID 2>/dev/null; then
 			write_out "Cannot start server - check logs in '$LOG_ERROR'"
 			return 1
 		fi
@@ -1850,17 +1851,17 @@ function usage()
 
 function wait_server_start()
 {
-	TIMEOUT=30
-	CONF_FILE="$1"
+	START_TIMEOUT=60
+	PID=$1
+	CONF_FILE="$2"
 	LOG_ERROR="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
-	PID_FILE="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	sleep 5
 	COUNT=5
-	while [ $COUNT -lt $TIMEOUT ]; do
+	while [ $COUNT -lt $START_TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
 		fi
-		if ! [ -f "$PID_FILE" ]; then
+		if ! kill -0 $PID 2>/dev/null; then
 			return 1
 		fi
 		sleep 1
