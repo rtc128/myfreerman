@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.9
+RELEASE=1.4.10
 
 function apply_binlog()
 {
@@ -1586,7 +1586,7 @@ function restore_aux_instance()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" >$TMP_LOG 2>&1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" >$TMP_LOG 2>&1
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -1595,7 +1595,7 @@ function restore_aux_instance()
 			return 1
 		fi
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" || return 1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 
@@ -1677,7 +1677,7 @@ function restore_target_instance()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG >>"$LOG_FILE"
 		cat $TMP_LOG
@@ -1686,7 +1686,7 @@ function restore_target_instance()
 			return 1
 		fi
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" || return 1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
 #===========================================
