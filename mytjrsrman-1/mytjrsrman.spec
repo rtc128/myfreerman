@@ -35,7 +35,7 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
-* Tue Mar 11 2020 Rodrigo Tassinari 1.4.10
+* Tue Mar 31 2020 Rodrigo Tassinari 1.4.10
 - In restore, do not write log in backup folder - so backup FS can be mounted RO
 
 * Thu Mar 26 2020 Rodrigo Tassinari 1.4.9
