@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.11
+RELEASE=1.4.12
 
 function apply_binlog()
 {
@@ -1412,7 +1412,7 @@ function restore()
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	SLAVE=0
 	ANSWER_YES=0
-	CUR_SOCKET="$MYSQL_SOCKET"
+	CUR_SOCKET="$DB_SOCKET"
 	cd "$BASE_BACKUP_DIR" || return 1
 	DIR=`ls | tail -n 1 | cut -d . -f 1`
 	if [ -z "$DIR" ]; then
