@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.13
+RELEASE=1.4.14
 
 function apply_binlog()
 {
@@ -51,6 +51,7 @@ function backup()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function backup_binlog()
@@ -1583,6 +1584,7 @@ function restore()
 		rm -fr "$AUX_BASEDIR"
 		rm "$AUX_LOG_ERROR"
 	fi
+	write_out "Finished"
 }
 
 function restore_aux_instance()
@@ -1839,7 +1841,6 @@ function run()
 			return 1
 			;;
 	esac
-	write_out "Finished"
 }
 
 function uncompress_backup()
