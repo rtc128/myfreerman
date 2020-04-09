@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.12
+RELEASE=1.4.13
 
 function apply_binlog()
 {
@@ -351,9 +351,13 @@ function check_new_db_name()
 function check_purge_binlogs()
 {
 	if [ -n "$SLAVE_SERVER" -a $USE_AUX_INSTANCE -eq 0 ]; then
-		LIMIT_LOG=`get_current_slave_binlog` || return 1
+		LIMIT_LOG=`get_current_slave_binlog`
 	else
 		LIMIT_LOG=$1
+	fi
+	if [ $? -ne 0 ]; then
+		write_out "Cannot contact slave server - no binary log will be purged"
+		return
 	fi
 	write_out "Purging binary logs (limit: $LIMIT_LOG)"
 	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
@@ -754,11 +758,16 @@ function get_current_slave_binlog()
 	if [ -z  "$SLAVE_PORT" ]; then
 		SLAVE_PORT=3306
 	fi
-	TARGET_CRED_OPT=`mount_slave_credentials_opt`
+	SLAVE_CRED_OPT=`mount_slave_credentials_opt`
 
 #before getting slave status, check if we can reach it
-	mysqladmin $TARGET_CRED_OPT ping >/dev/null || return 1
-	mysql $TARGET_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //' || return 1
+	RESULT=1
+	if mysqladmin $SLAVE_CRED_OPT ping >/dev/null; then
+		if mysql $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'; then
+			RESULT=0
+		fi
+	fi
+	return $RESULT
 }
 
 function header()
@@ -1830,6 +1839,7 @@ function run()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function uncompress_backup()
