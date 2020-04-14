@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.14
+RELEASE=1.4.15
 
 function apply_binlog()
 {
@@ -51,7 +51,6 @@ function backup()
 			return 1
 			;;
 	esac
-	write_out "Finished"
 }
 
 function backup_binlog()
@@ -763,7 +762,7 @@ function get_current_slave_binlog()
 
 #before getting slave status, check if we can reach it
 	RESULT=1
-	if mysqladmin $SLAVE_CRED_OPT ping >/dev/null; then
+	if mysqladmin $SLAVE_CRED_OPT status >/dev/null; then
 		if mysql $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'; then
 			RESULT=0
 		fi
@@ -928,6 +927,7 @@ function init()
 	#run initialize
 	write_out "Creating server repository"
 	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG_FILE" --initialize; then
+		write_out "Cannot create server repository. Please check mysql log at '$LOG_ERROR'."
 		return 1
 	fi
 	LINE=`grep -w password "$LOG_ERROR" | tail -n 1`
@@ -1584,7 +1584,6 @@ function restore()
 		rm -fr "$AUX_BASEDIR"
 		rm "$AUX_LOG_ERROR"
 	fi
-	write_out "Finished"
 }
 
 function restore_aux_instance()
@@ -1816,9 +1815,11 @@ function run()
 				return 1
 			fi
 			remove_lock_file
+			write_out "Finished"
 			;;
 		init)
 			init || return 1
+			write_out "Finished"
 			;;
 		list)
 			if ! list $*; then
@@ -1832,6 +1833,7 @@ function run()
 				return 1
 			fi
 			remove_lock_file
+			write_out "Finished"
 			;;
 		*)
 			if [ -n "$CMD" ]; then
