@@ -1,6 +1,6 @@
 rpm:
 	rpmdev-setuptree
-	gzip -c9 man/myfreerman.1 >mytjrsrman.1.gz
+	gzip -c9 man/myfreerman.1 >myfreerman.1.gz
 	gzip -c9 man/myfreerman.conf.8 >myfreerman.conf.8.gz
 	tar -C .. -c -z -f ../myfreerman-1.tar.gz myfreerman-1
 	mv ../myfreerman-1.tar.gz ~/rpmbuild/SOURCES
