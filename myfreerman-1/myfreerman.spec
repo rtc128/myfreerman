@@ -1,15 +1,15 @@
-Name:           mytjrsrman
+Name:           myfreerman
 Version:        1
 Release:        1.4.15
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
 License:			GPL
-Source0:			mytjrsrman-1.tar.gz
+Source0:			myfreerman-1.tar.gz
 Requires:		crudini >= 0.3
 
 %description
-Mytjrsrman uses MEB to create/restore backups of MySQL databases.
+MyFreeRMan uses MEB to create/restore backups of MySQL databases.
 It adds support for:
 - Server repostiry initialization
 - Compression of binlog backups
@@ -24,14 +24,14 @@ It adds support for:
 install -m 0755 -d $RPM_BUILD_ROOT/usr/bin
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man8
-install -m 0755 mytjrsrman $RPM_BUILD_ROOT/usr/bin/mytjrsrman
-install -m 0644 mytjrsrman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
-install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
+install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
+install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
+install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %files
-/usr/bin/mytjrsrman
-/usr/share/man/man1/mytjrsrman.1.gz
-/usr/share/man/man8/mytjrsrman.conf.8.gz
+/usr/bin/myfreerman
+/usr/share/man/man1/myfreerman.1.gz
+/usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
 
@@ -103,7 +103,7 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 * Fri Feb 21 2020 Rodrigo Tassinari 1.3.20
 - Minor fixes in timeouts
 - New config to limit MEB memory use
-- In full backup, copy server and mytjrsrman configs
+- In full backup, copy server and myfreerman configs
 - New option in restore: -s (slave mode): do not apply binlogs - all changes since full backup will be copied back from master
 - New command supported: 'init'
 - New option in full backup: do not backup binlogs at the same time
@@ -180,7 +180,7 @@ install -m 0644 mytjrsrman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 - Minor fixes in reports
 
 * Thu Oct 03 2019 Rodrigo Tassinari 1.2.13
-- Save mysqlbackup logs syncly in mytjrsrman log, and do not use a buffer anymore
+- Save mysqlbackup logs syncly in myfreerman log, and do not use a buffer anymore
 
 * Wed Sep 25 2019 Rodrigo Tassinari 1.2.12
 - Do not abort when there is a gap in binlog sequence

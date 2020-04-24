@@ -83,7 +83,7 @@ function backup_binlog()
 	mysqladmin $TARGET_CRED_OPT flush-logs || return 1
 
 	#list binlogs, just ignoring the last one
-	LIST_FILE=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	mysql $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || return 1
 	TOTAL=`cat $LIST_FILE | wc -l` || return 1
 	COUNT=$((TOTAL - 1))
@@ -129,7 +129,7 @@ function backup_full()
 	LIM_MEM_OPT=`mount_limit_memory_option`
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
-		TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		mysqlbackup $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="${DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
@@ -417,8 +417,8 @@ function check_target_instance_config()
 		write_out "Cannot find 'mysqld' executable file"
 		return 1
 	fi
-	TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
-	TMP_CONF=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+	TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	TMP_CONF=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	grep -v "^audit" "$CONFIG_FILE" >$TMP_CONF || return 1
 	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
 		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
@@ -722,11 +722,11 @@ function get_binlog_transaction_timestamp()
 	PLAIN_BINLOG=/$BINLOG
 	TMP_BINLOG=
 	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
-		TMP_BINLOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+		TMP_BINLOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		PLAIN_BINLOG=$TMP_BINLOG
 		gunzip -c $BINLOG >$PLAIN_BINLOG
 	fi
-	TMP_SQL=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	mysqlbinlog $PLAIN_BINLOG >$TMP_SQL || return 1
 	if [ -n "$TMP_BINLOG" ]; then
 		rm $TMP_BINLOG
@@ -772,7 +772,7 @@ function get_current_slave_binlog()
 
 function header()
 {
-	write_out "MyTJRSRman - TJRS Backup Utility for MySQL - Release $RELEASE - Host $MYHOST"
+	write_out "myfreerman - Free Recovery Manager for MySQL - Release $RELEASE - Host $MYHOST"
 }
 
 function kill_pid()
@@ -937,7 +937,7 @@ function init()
 
 	write_out "Running initial config commands"
 	#create tmp file with commands
-	SQL=`mktemp /tmp/mytjrsrman.XXXXXX`
+	SQL=`mktemp /tmp/myfreerman.XXXXXX`
 	echo "alter user root@localhost identified by '$NEW_PASSWORD';" >>$SQL
 	echo "update mysql.user set host = '%' where user = 'root' and host = 'localhost';" >>$SQL
 	echo "flush privileges;" >>$SQL
@@ -1002,7 +1002,7 @@ function list_binlog()
 
 function list_binlog_remote
 {
-	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c /etc/mytjrsrman/${LIST_REMOTE_HOST}.conf list binlog
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST myfreerman -c /etc/myfreerman/${LIST_REMOTE_HOST}.conf list binlog
 }
 
 function list_full()
@@ -1021,7 +1021,7 @@ function list_full()
 
 function list_full_remote
 {
-	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST mytjrsrman -c /etc/mytjrsrman/${LIST_REMOTE_HOST}.conf list full
+	ssh -q -o "StrictHostKeyChecking=no" $LIST_REMOTE_HOST myfreerman -c /etc/myfreerman/${LIST_REMOTE_HOST}.conf list full
 }
 
 function list_remote
@@ -1234,7 +1234,7 @@ function read_binlog()
 	PLAIN_BINLOG=$BINLOG
 	TMP_BINLOG=
 	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
-		TMP_BINLOG=`mktemp /tmp/mytjrsrman.XXXXXX`
+		TMP_BINLOG=`mktemp /tmp/myfreerman.XXXXXX`
 		PLAIN_BINLOG=$TMP_BINLOG
 		gunzip -c $BINLOG >$PLAIN_BINLOG || return 1
 	fi
@@ -1251,7 +1251,7 @@ function read_binlog()
 function read_config()
 {
 	#mount ini section
-	INI_SECTION=mytjrsrman
+	INI_SECTION=myfreerman
 	if [ -n "$MYSQL_SID" ]; then
 		INI_SECTION=${INI_SECTION}@${MYSQL_SID}
 	fi
@@ -1316,7 +1316,7 @@ function recover()
 	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	CONFIG="$3"
 	SOCKET="$4"
-	TMP_SQL=`mktemp /tmp/mytjrsrman.XXXXXX`
+	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
 	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
 	ITYPE="restricted"
@@ -1596,7 +1596,7 @@ function restore_aux_instance()
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
-		TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_BASENAME}" --log-bin-index="${AUX_BINLOG_INDEX}" >$TMP_LOG 2>&1
 		RETCODE=$?
 		cat $TMP_LOG
@@ -1687,7 +1687,7 @@ function restore_target_instance()
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
-		TMP_LOG=`mktemp /tmp/mytjrsrman.XXXXXX` || return 1
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_BASENAME}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -1854,7 +1854,7 @@ function uncompress_backup()
 
 function usage()
 {
-	echo "Usage:  mytjrsrman [ -c <config file> ] [ -l <log file format> ] <command> [ <cmd options> ]"
+	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] <command> [ <cmd options> ]"
 	echo "- command:"
 	echo "   init"
 	echo "   backup full|binlog"
