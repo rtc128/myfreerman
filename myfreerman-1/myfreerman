@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.15
+RELEASE=1.4.16
 
 function apply_binlog()
 {
@@ -357,6 +357,10 @@ function check_purge_binlogs()
 	fi
 	if [ $? -ne 0 ]; then
 		write_out "Cannot contact slave server - no binary log will be purged"
+		return
+	fi
+	if [ -z "$LIMIT_LOG" ]; then
+		write_out "Cannot retrieve slave server's current slave status - no binary log will be purged"
 		return
 	fi
 	write_out "Purging binary logs (limit: $LIMIT_LOG)"
