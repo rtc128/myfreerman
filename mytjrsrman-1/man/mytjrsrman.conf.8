@@ -16,6 +16,8 @@ DB_PASSWORD: Database password - optional - mysql_config_editor can be used.
 
 DB_USERNAME: Database username - optional - mysql_config_editor can be used.
 
+LOCAL_ONLY: Do not backup if server is not running in localhost - even if it is remotely accessable. This is useful to avoid backup concurrency, when you have a cluster, using a vip, and all nodes have backup schedules. The check is done even if background mode is enabled. Possible values: 0, 1. Default: 0.
+
 LOG_DIR: Log directory. Required when option -b is used.
 
 LOCK_FILE: Lock file path. Lock file is used to block simultaneous instances running.
