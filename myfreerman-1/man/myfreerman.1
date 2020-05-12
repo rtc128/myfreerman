@@ -1,14 +1,14 @@
-.\" Manpage for mytjrsrman.
+.\" Manpage for myfreerman.
 
-.TH man 1 "mytjrsrman man page"
+.TH man 1 "myfreerman man page"
 
 .SH NAME
 
-mytjrsrman \- administer mysql backups
+myfreerman \- administer mysql backups
 
 .SH SYNOPSIS
 
-mytjrsrman [ -c <config> ] [ -l <log file format> ] <command> [ <command options and arguments ...> ]
+myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] <command> [ <command options and arguments ...> ]
 
 .B commands
 
@@ -40,8 +40,8 @@ It adds support for:
 
 .SH CONFIGURATION
 
-The default configuration section is \fBmysqld\fR for the server and \fBmytjrsrman\fR for mytjrsrman. You can define environment variable \fBMYSQL_SID\fR to change the section.
-Exemple: MYSQL_SID=dev => sections are mysqld@dev and mytjrsrman@dev.
+The default configuration section is \fBmysqld\fR for the server and \fBmyfreerman\fR for myfreerman. You can define environment variable \fBMYSQL_SID\fR to change the section.
+Exemple: MYSQL_SID=dev => sections are mysqld@dev and myfreerman@dev.
 
 .SH OPTIONS
 
@@ -49,13 +49,14 @@ Exemple: MYSQL_SID=dev => sections are mysqld@dev and mytjrsrman@dev.
 
 -l Print output to log file. Variables in format are the same as in "date" command.
 
+-q Quiet mode - do not show release information
+
 
 .B backup
 
 Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
 
 	full: database full backup
-
 
 	binlog: backup binary logs
 
@@ -93,7 +94,7 @@ Server config file must exist.
 
 .SH SEE ALSO
 
-mytjrsrman.conf(8)
+myfreerman.conf(8)
 
 .SH AUTHOR
 

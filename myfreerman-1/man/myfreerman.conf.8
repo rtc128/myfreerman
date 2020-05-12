@@ -1,20 +1,18 @@
-.\" Manpage for mytjrsrman.
+.\" Manpage for myfreerman.
 
-.TH man 8 "mytjrsrman.conf man page"
+.TH man 8 "myfreerman.conf man page"
 
 .SH NAME
 
-mytjrsrman.conf \- mytjrsrman configuration
+myfreerman.conf \- myfreerman configuration
 
 .SH DESCRIPTION
 
-mytjrsrman reads its configuration from a section in Mysql server's my.cnf configuration file. The default section name is "[mytjrsrman]". If you need more than one instance in the same host, use "[mytjrsrman@<sid>]" - where <sid> is Mysql server instance alias, and set MYSQL_SID before calling mytjrsrman. For example, use "[mytjrsrman@dev]" and set MYSQL_SID=dev. Configuration variables:
+myfreerman reads its configuration from a section in Mysql server's my.cnf configuration file. The default section name is "[myfreerman]". If you need more than one instance in the same host, use "[myfreerman@<sid>]" - where <sid> is Mysql server instance alias, and set MYSQL_SID before calling myfreerman. For example, use "[myfreerman@dev]" and set MYSQL_SID=dev. Configuration variables:
 
 aux_basedir: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
-	REQUIRED
 
 backup_directory: Directory where backups are going to be saved.
-	REQUIRED
 
 db_hostname: Database hostname - optional - mysql_config_editor can be used.
 
@@ -27,7 +25,6 @@ db_username: Database username - optional - mysql_config_editor can be used.
 log_dir: log directory. Required when option -l is used.
 
 lock_file: Lock file path. Lock file is used to block simultaneous instances running.
-	REQUIRED
 
 max_mem: max memory Enterprise Backup is allowed to use - in Mb.
    DEFAULT: 300.
@@ -39,7 +36,6 @@ read_threads: Number of threads for reading tasks.
    DEFAULT: 1.
 
 retention_period: Backup retention period (days).
-	REQUIRED
 
 slave_server: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
    DEFAULT: no slave is configured.
@@ -51,7 +47,7 @@ write_threads: Number of threads for writing tasks.
 
 ==> Instance: tst
 
-[mytjrsrman@tst]
+[myfreerman@tst]
 
 aux_basedir=/var/tmp/mysql.aux
 
@@ -63,9 +59,9 @@ db_password=passwd1234
 
 db_socket=/var/lib/mysql/tmt.sock
 
-log_dir=/var/log/mytjrsrman
+log_dir=/var/log/myfreerman
 
-lock_file=/var/lib/mytjrsrman.lock
+lock_file=/var/lib/myfreerman.lock
 
 retention_period=20
 
@@ -74,7 +70,7 @@ read_threads=5
 write_threads=5
 
 .SH SEE ALSO
-mytjrsrman(1)
+myfreerman(1)
 
 .SH AUTHOR
 Rodrigo Cardoso <rodrigocardoso@tjrs.jus.br>
