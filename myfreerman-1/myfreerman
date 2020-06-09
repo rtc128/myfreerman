@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.17
+RELEASE=1.4.18
 
 function apply_binlog()
 {
