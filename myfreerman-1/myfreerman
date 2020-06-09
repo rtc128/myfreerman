@@ -175,6 +175,18 @@ function binlog_backup_exists()
 	return 1
 }
 
+function binlog_exists()
+{
+	LOGSEQ=$1
+	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
+	FILEPATH="${BINLOG_PREFIX}.$LONG_LOGSEQ"
+	if [ -f "$FILEPATH" ]; then
+		return 0
+	fi
+	return 1
+}
+
+
 function check_aux_binaries()
 {
 	if ! which mysqld >/dev/null 2>&1; then
@@ -246,7 +258,13 @@ function check_config()
 
 	#WRITE_THREADS
 	if [ $WRITE_THREADS -lt 1 -o $WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
-		echo "configuration WRITE_THREADS must be between 1 and $MAX_WRITE_THREADS" >&2
+		echo "Configuration WRITE_THREADS must be between 1 and $MAX_WRITE_THREADS" >&2
+		return 1
+	fi
+
+	#DB_HOSTNAME and DB_SOCKET cannot both be set mutually
+	if [ -n "$DB_HOSTNAME" -a -n "$DB_SOCKET" ]; then
+		echo "Configurations DB_HOSTNAME and DB_SOCKET cannot both be set"
 		return 1
 	fi
 }
@@ -705,19 +723,30 @@ function get_binlog_path()
 	return 1
 }
 
-function get_binlog_backup_path()
+function get_binlog_path()
 {
 	LOGSEQ=$1
 	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
 	BINLOG=binlog.$LONG_LOGSEQ
-	if [ -f $BINLOG_BACKUP_DIR/$BINLOG ]; then
-		echo $BINLOG_BACKUP_DIR/$BINLOG
+
+	#search in backup
+	if [ -f "$BINLOG_BACKUP_DIR/$BINLOG" ]; then
+		echo "$BINLOG_BACKUP_DIR/$BINLOG"
 		return
 	fi
-	if [ -f $BINLOG_BACKUP_DIR/$BINLOG.gz ]; then
-		echo $BINLOG_BACKUP_DIR/$BINLOG.gz
+
+	#search in backup (compressed)
+	if [ -f "$BINLOG_BACKUP_DIR/$BINLOG.gz" ]; then
+		echo "$BINLOG_BACKUP_DIR/$BINLOG.gz"
 		return
 	fi
+
+	#search in server repository
+	if [ -f "${BINLOG_PREFIX}.$LONG_LOGSEQ" ]; then
+		echo "${BINLOG_PREFIX}.$LONG_LOGSEQ"
+		return
+	fi
+
 	echo "Cannot find binary log $LOGSEQ anywhere" >&2
 	return 1
 }
@@ -1254,7 +1283,7 @@ function read_binlog()
 	if [ $POSITION -ne 0 ]; then
 		POSITION_OPTION="--start-position=$POSITION"
 	fi
-	BINLOG=`get_binlog_backup_path $LOGSEQ`
+	BINLOG=`get_binlog_path $LOGSEQ`
 	PLAIN_BINLOG=$BINLOG
 	TMP_BINLOG=
 	if file $PLAIN_BINLOG | grep -w gzip >/dev/null; then
@@ -1367,6 +1396,17 @@ function recover()
 
 	LOGSEQ=`expr $LOGSEQ + 1`
 	while binlog_backup_exists $LOGSEQ; do
+		rm $TMP_SQL || return 1
+		touch $TMP_SQL || return 1
+		write_out "Applying binary log sequence $LOGSEQ"
+		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
+		if ! apply_binlog $TMP_SQL "$SOCKET"; then
+			mysql_stop "$CONFIG" $ITYPE
+			return 1
+		fi
+		LOGSEQ=`expr $LOGSEQ + 1`
+	done
+	while binlog_exists $LOGSEQ; do
 		rm $TMP_SQL || return 1
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log sequence $LOGSEQ"
@@ -1510,12 +1550,18 @@ function restore()
 	#check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
 	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
+		#only when database is running locally
+		if [ -z "$DB_SOCKET" ]; then
+			write_out "For schema/table restoration, database must be running locally"
+			return 1
+		fi
 		USE_AUX_INSTANCE=1
 		#target instance must be running
 		if ! mysqladmin $TARGET_CRED_OPT status >/dev/null 2>&1; then
 			write_out "Cannot connect to target instance"
 			return 1
 		fi
+		BINLOG_PREFIX=`mysql $TARGET_CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
 	fi
 	DB_COPY=0
 	MOMENT=`date +%Y%m%d-%H%M%S`
