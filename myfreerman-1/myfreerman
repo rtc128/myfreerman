@@ -92,12 +92,12 @@ function backup_binlog()
 	LAST_BINLOG=`tail -n 1 $LIST_FILE`
 	rm $LIST_FILE
 	for BINLOG in $LIST; do
-		if ! [ -f "$BINLOG_BACKUP_DIR/${BINLOG}.gz" ]; then
-			LONG_LOGSEQ=`echo $BINLOG | cut -d . -f 2`
-			LOGSEQ=`expr $LONG_LOGSEQ + 0`
-			write_out "Saving binary log sequence $LOGSEQ"
-			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" || return 1
-		fi
+		LONG_LOGSEQ=`echo $BINLOG | cut -d . -f 2`
+		LOGSEQ=`expr $LONG_LOGSEQ + 0`
+		SRC_BINLOG=$BINLOG
+		DST_BINLOG=$BINLOG
+		write_out "Saving binary log sequence $LOGSEQ"
+		gzip -c9 "$BINLOG_DIR/$DST_BINLOG" >"$BINLOG_BACKUP_DIR/${SRC_BINLOG}.gz" || return 1
 	done
 	check_purge_binlogs $LAST_BINLOG || return 1
 }
@@ -173,6 +173,23 @@ function binlog_backup_exists()
 		return 0
 	fi
 	return 1
+}
+
+function change_binlog_seq()
+{
+	LOGSEQ=$1
+	NEWSEQ=$2
+
+	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
+	LONG_NEWSEQ=`seq -f "%06g" $NEWSEQ $NEWSEQ`
+	write_out "Changing binlog sequence $LOGSEQ to $NEWSEQ"
+	perl -p -i -e s/$LONG_LOGSEQ/$LONG_NEWSEQ/ "$BINLOG_INDEX" || return 1
+	#echo perl -p -i -e s/$LONG_LOGSEQ/$LONG_NEWSEQ/ \"$BINLOG_INDEX\"
+
+	BINLOG_PATH="${BINLOG_PREFIX}.${LONG_LOGSEQ}"
+	NEW_BINLOG_PATH="${BINLOG_PREFIX}.${LONG_NEWSEQ}"
+	mv "$BINLOG_PATH" "$NEW_BINLOG_PATH" || return 1
+	#echo mv "$BINLOG_PATH" "$NEW_BINLOG_PATH"
 }
 
 function check_aux_binaries()
@@ -760,6 +777,16 @@ function get_binlog_transaction_timestamp()
 	date -d"$TIMESTAMP" +%Y-%m-%d_%H-%M-%S
 }
 
+function get_last_binlog_backup_sequence()
+{
+	LAST_FILE=`ls "$BINLOG_BACKUP_DIR" | tail -n 1`
+	if [ -z "$LAST_FILE" ]; then
+		return
+	fi
+	RESULT=`get_binlog_sequence $LAST_FILE`
+	echo $RESULT
+}
+
 function get_mysql_usage()
 {
 	BACKUP=$1
@@ -889,6 +916,7 @@ function init()
 	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
 		BINLOG_DIR="`dirname $BINLOG_PREFIX`" || return 1
+		BINLOG_PREFIX_BN="`basename $BINLOG_PREFIX`" || return 1
 		mkdir -p "$BINLOG_DIR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$BINLOG_DIR" || return 1
@@ -1449,6 +1477,62 @@ function reset_master()
 	mysql $TARGET_CRED_OPT -e "reset master;" >/dev/null || return 1
 }
 
+function resync_binlogs()
+{
+	#server cannot be running
+	if mysqladmin $TARGET_CRED_OPT ping >/dev/null 2>&1; then
+		write_out "MySQL server is running - cannot resync"
+		return
+	fi
+	BINLOG_INDEX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin_index 2>/dev/null`"
+	if [ -z "$BINLOG_INDEX" ]; then
+		BINLOG_INDEX="$DATADIR/binlog.index"
+	fi
+	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
+	LAST_BKP_SEQ=`get_last_binlog_backup_sequence` || return 1
+	if [ -z "$LAST_BKP_SEQ" ]; then
+		write_out "No binary logs found in backup"
+		return 1
+	fi
+	N=1
+#list cur binlogs
+	for F in `cat "$BINLOG_INDEX"`; do
+		BASE_F="`basename \"$F\"`"
+		LONG_LOGSEQ=`echo "$BASE_F" | cut -d . -f 2`
+		LOGSEQ=`expr $LONG_LOGSEQ + 0`
+		DIFF=`expr $LAST_BKP_SEQ - $LOGSEQ`
+		if [ $DIFF -ge 0 ]; then
+			NEWSEQ=$((LOGSEQ + DIFF + $N))
+			N="$((N + 1))"
+			change_binlog_seq $LOGSEQ $NEWSEQ || return 1
+		fi
+	done
+}
+
+function resync_logseq()
+{
+	#first, get last sequence
+	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	mysql $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || return 1
+	TOTAL=`cat $LIST_FILE | wc -l` || return 1
+	COUNT=$((TOTAL - 1))
+	LIST=`head -n $COUNT $LIST_FILE`
+	rm $LIST_FILE
+	LAST_BINLOG=`tail -n 1 $LIST_FILE`
+	LONG_LOGSEQ=`echo $LAST_BINLOG | cut -d . -f 2`
+	LAST_SEQ=`expr $LONG_LOGSEQ + 0`
+
+#now, compare how ahead backup is, from server seq
+	LAST_BKP_SEQ=`get_last_binlog_backup_sequence` || return 1
+	DIFF=`expr $LAST_BKP_SEQ - $LAST_SEQ`
+	if [ $DIFF -gt 0 ]; then
+		write_out "Resyncing binlog sequence - diff: $DIFF"
+		for i in 1 to $DIFF; do
+			mysqladmin $TARGET_CRED_OPT flush-logs || return 1
+		done
+	fi
+}
+
 function restore()
 {
 	PITR=0
@@ -1875,6 +1959,10 @@ function run()
 			remove_lock_file
 			write_out "Finished"
 			;;
+		"resync-binlogs")
+			resync_binlogs
+			write_out "Finished"
+			;;
 		*)
 			if [ -n "$CMD" ]; then
 				echo "Invalid command: $CMD" >&2
@@ -1902,8 +1990,9 @@ function usage()
 	echo "- command:"
 	echo "   init"
 	echo "   backup full|binlog"
-	echo "   restore [ <restore options> ]"
 	echo "   list [-h <hostname> [-P <port>]] full|binlog"
+	echo "   restore [ <restore options> ]"
+	echo "   resync-binlogs"
 }
 
 function wait_server_start()
