@@ -1457,17 +1457,14 @@ function restore()
 	SLAVE=0
 	ANSWER_YES=0
 	CUR_SOCKET="$DB_SOCKET"
-	cd "$BASE_BACKUP_DIR" || return 1
-	DIR=`ls | tail -n 1 | cut -d . -f 1`
-	if [ -z "$DIR" ]; then
-		write_out "No backup to be restored"
-		return 1
-	fi
 	local OPTIND l_opt
-	while getopts "np:d:st:x:y" l_opt; do
+	while getopts ":f:np:d:st:x:y" l_opt; do
 		case $l_opt in
 			d)
 				RESTORE_DB_OLD_NAME=${OPTARG}
+				;;
+			f)
+				BACKUP_DIR="${OPTARG}"
 				;;
 			n)
 				DB_COPY=1
@@ -1492,13 +1489,28 @@ function restore()
 				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
+				return 1
+				;;
+			: )
+				echo "Invalid option: $OPTARG requires an argument" 1>&2
+				return 1
 				;;
 		esac
 	done
+	restore_validate_options || return 1
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
+	DIR=
+	if cd "$BASE_BACKUP_DIR" 2>/dev/null; then
+		DIR=`ls | tail -n 1 | cut -d . -f 1`
+	fi
+	if [ -z "$DIR" ]; then
+		write_out "No backup to be restored"
+		return 1
+	fi
 	if ! confirm_operation; then
 		return 0
 	fi
-	restore_validate_options || return 1
 	if ! [ -f "$CONFIG_FILE" ]; then
 		write_out "Cannot find readable file '$CONFIG_FILE'"
 		return 1
@@ -1768,6 +1780,12 @@ function restore_target_instance()
 
 function restore_validate_options()
 {
+	#backup directory must exist
+	if ! [ -d "$BACKUP_DIR" ]; then
+		write_out "Directory not found: $BACKUP_DIR"
+		return 1
+	fi
+
 	if [ -n "$RESTORE_DB_NEW_NAME" -a -z "$RESTORE_DB_OLD_NAME" ]; then
 		echo "Option -x requires -d" >&2
 		return 1

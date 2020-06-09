@@ -18,7 +18,7 @@ init
 
 list [ -r <remote server> ] full | binlog
 
-restore [ -y ] [ -n ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <database> [ -x <database> ] | [ -t <database1.table1> [ -t <database2.table2> [ ... ] ] ] ]
+restore [ -y ] [ -n ] [ -f <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <database> [ -x <database> ] | [ -t <database1.table1> [ -t <database2.table2> [ ... ] ] ] ]
 
 .SH DESCRIPTION
 
@@ -77,6 +77,8 @@ Restore a previously created backup.
 By default, after restoring a backup with PITR, a new backup incarnation is created. Directories $BACKUP_DIR/base and $BACKUP_DIR/binlog are moved to $BACKUP_DIR/restore/$CURRENT_TIMESTAMP.
 If you anytime wish to access this backupset again, you need to manually move contents from $BACKUP_DIR/restore/$CURRENT_TIMESTAMP to $BACKUP_DIR. See -n option.
 Server config file must exist.
+
+	-f Use specified backup directory to restore database from, and not the one in configuration file.
 
    -n Do not create a new backup incarnation. This is used for PITR accross different environments, such as restoring production backups in test servers.
 
