@@ -78,7 +78,7 @@ By default, after restoring a backup with PITR, a new backup incarnation is crea
 If you anytime wish to access this backupset again, you need to manually move contents from $BACKUP_DIR/restore/$CURRENT_TIMESTAMP to $BACKUP_DIR. See -n option.
 Server config file must exist.
 
-	-f Use specified backup directory to restore database from, and not the one in configuration file.
+   -f Use specified backup directory to restore database from, and not the one in configuration file.
 
    -n Do not create a new backup incarnation. This is used for PITR accross different environments, such as restoring production backups in test servers.
 
