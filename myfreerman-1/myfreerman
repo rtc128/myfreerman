@@ -217,14 +217,6 @@ function check_backup_consistency()
 
 function check_config()
 {
-	#AUX_BASEDIR - if defined, must exist
-	if [ -n "$AUX_BASEDIR" ]; then
-		if ! [ -d "$AUX_BASEDIR" ]; then
-			echo "'$AUX_BASEDIR': no such directory" >&1
-			return 1
-		fi
-	fi
-
 	#LOG_DIR
 	#if -l option used, log_dir is required
 	if [ -n "$LOG_FILE_BASENAME" -a -z "$LOG_DIR" ]; then
@@ -1562,20 +1554,20 @@ function restore()
 	fi
 	CONFIG="$CONFIG_FILE"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		cd "$AUX_BASEDIR" || return 1
-		cd -
-		check_aux_binaries || return 1
 		if [ -z "$AUX_BASEDIR" ]; then
-			echo "When restoring a single database or a table, AUX_BASEDIR configuration must be set" >&2
+			write_out "When restoring a single database or a table, AUX_BASEDIR configuration must be set"
 			return 1
 		fi
 		if ! [ -d "$AUX_BASEDIR" ]; then
-			echo "AUX_BASEDIR: not a directory (or access is denied)" >&2
+			write_out "No such directory: $AUX_BASEDIR" >&2
 			return 1
 		fi
+		check_aux_binaries || return 1
 		AUX_BASEDIR=`mktemp -d -p "$AUX_BASEDIR" -t "aux_XXXXXXXX"` || return 1
 		BASENAME=`basename "$AUX_BASEDIR"` || return 1
-		chown mysql "$AUX_BASEDIR" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$AUX_BASEDIR" || return 1
+		fi
 		DB_COPY=1
 		AUX_CONFIG=/tmp/${BASENAME}.cnf
 		CONFIG="$AUX_CONFIG"
