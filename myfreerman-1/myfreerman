@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.20
+RELEASE=1.4.21
 
 function apply_binlog()
 {
@@ -1471,12 +1471,12 @@ function restore()
 	ANSWER_YES=0
 	CUR_SOCKET="$DB_SOCKET"
 	local OPTIND l_opt
-	while getopts ":f:np:d:st:x:y" l_opt; do
+	while getopts ":d:no:p:st:x:y" l_opt; do
 		case $l_opt in
 			d)
 				RESTORE_DB_OLD_NAME=${OPTARG}
 				;;
-			f)
+			o)
 				BACKUP_DIR="${OPTARG}"
 				;;
 			n)
@@ -1939,7 +1939,7 @@ function usage()
 	echo "- command:"
 	echo "   init"
 	echo "   backup full|binlog"
-	echo "   restore [ -y ] [ -n ] [ -f <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
+	echo "   restore [ -y ] [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
 	echo "   list [-h <hostname> [-P <port>]] full|binlog"
 }
 
