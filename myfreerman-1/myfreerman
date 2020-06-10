@@ -1875,6 +1875,9 @@ function run()
 		esac
 	done
 	shift $((OPTIND-1))
+	if [ $QUIET -eq 0 ]; then
+		header
+	fi
 	if [ $# -lt 1 ]; then
 		usage
 		return 1
@@ -1883,9 +1886,6 @@ function run()
 	LOG_FILE=
 	if [ -n "$LOG_FILE_BASENAME" ]; then
 		LOG_FILE="${LOG_DIR}/$LOG_FILE_BASENAME"
-	fi
-	if [ $QUIET -eq 0 ]; then
-		header
 	fi
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	MYHOST=`hostname`
@@ -1958,7 +1958,7 @@ function usage()
 	echo "- command:"
 	echo "   init"
 	echo "   backup full|binlog"
-	echo "   restore [ <restore options> ]"
+	echo "   restore [ -y ] [ -n ] [ -f <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
 	echo "   list [-h <hostname> [-P <port>]] full|binlog"
 }
 
