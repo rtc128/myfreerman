@@ -793,6 +793,56 @@ function get_current_slave_binlog()
 	return $RESULT
 }
 
+function get_master_config()
+{
+	#read slave config
+	read -e -p "Master hostname: " MASTER_HOST
+	while [ -z "$MASTER_HOST" ]; do
+		read -e -p "Master hostname: " MASTER_HOST
+	done
+
+	read -e -p "Master port: [3306] "
+	if [ -z "$MASTER_PORT" ]; then
+		MASTER_PORT=3306
+	fi
+
+	read -e -p "Replication username: " REPL_USERNAME
+	while [ -z "$REPL_USERNAME" ]; do
+		read -e -p "Replication username: " REPL_USERNAME
+	done
+
+	read -s -p "Replication user password: " REPL_PASSWD
+	while [ -z "$REPL_PASSWD" ]; do
+		read -s -p "Replication user password: " REPL_PASSWD
+	done
+
+	while ! mysqladmin -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USERNAME -p"${REPL_PASSWD}" status >/dev/null; do
+		read -e -p "Master hostname: [$MASTER_HOST]" NEW_MASTER_HOST
+		if [ -z "$NEW_MASTER_HOST" ]; then
+			NEW_MASTER_HOST=$MASTER_HOST
+		fi
+		MASTER_HOST=$NEW_MASTER_HOST
+
+		read -e -p "Master port: [$MASTER_PORT] " NEW_MASTER_PORT
+		if [ -z "$NEW_MASTER_PORT" ]; then
+			NEW_MASTER_PORT=$MASTER_PORT
+		fi
+		MASTER_PORT=$NEW_MASTER_PORT
+
+		read -e -p "Replication username: [$REPL_USERNAME] " NEW_REPL_USERNAME
+		if [ -z "$NEW_REPL_USERNAME" ]; then
+			NEW_REPL_USERNAME=$REPL_USERNAME
+		fi
+		REPL_USERNAME=$NEW_REPL_USERNAME
+
+		read -s -p "Replication user password: [********] " NEW_REPL_PASSWD
+		if [ -z "$NEW_REPL_PASSWD" ]; then
+			NEW_REPL_PASSWD=$REPL_PASSWD
+		fi
+		REPL_PASSWD=$NEW_REPL_PASSWD
+	done
+}
+
 function header()
 {
 	write_out "myfreerman - Free Recovery Manager for MySQL - Release $RELEASE - Host $MYHOST"
@@ -815,7 +865,7 @@ function kill_pid()
 	done
 }
 
-function init()
+function init_db()
 {
 	#error log is required
 	LOG_ERROR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
@@ -970,6 +1020,51 @@ function init()
 
 	mysql_stop "$CONFIG_FILE" "init"
 	rm $SQL
+}
+
+
+function init_slave()
+{	
+	get_master_config || return 1
+	read -e -p "Directory with master backup: " DIR
+	if ! [ -d "$DIR" ]; then
+		echo "Cannot find directory" >&2
+		return 1
+	fi
+	restore -y -s -o "$DIR" || exit 1
+
+	#start server
+	mysql_start "$CONFIG_FILE" slave || return 1
+
+	#query binlog info at the time of the backup
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+
+	MASTER_BINLOG=`mysql $TARGET_CRED_OPT -e "show master status\G" | grep -wi file | cut -d : -f 2 | tr -d \ `
+	if [ -z "$MASTER_BINLOG" ]; then
+		mysql_stop slave
+		return 1
+	fi
+
+	MASTER_POS=`mysql $TARGET_CRED_OPT -e "show master status\G" | grep -wi Position | cut -d : -f 2 | tr -d \ `
+	if [ -z "$MASTER_POS" ]; then
+		mysql_stop slave
+		return 1
+	fi
+
+	#mount command to config slave
+	CMD="change master to master_host='$MASTER_HOST', master_port=$MASTER_PORT, master_log_file='$MASTER_BINLOG', master_log_pos=$MASTER_POS, master_ssl=1, master_user='$REPL_USERNAME', master_password='$REPL_PASSWD'";
+	write_out "Setting new slave configuration"
+	if ! mysql $TARGET_CRED_OPT -e "$CMD"; then
+		mysql_stop "$CONFIG_FILE" slave || return 1
+		return 1
+	fi
+	if ! mysql $TARGET_CRED_OPT -e "start slave"; then
+		mysql_stop "$CONFIG_FILE" slave || return 1
+		return 1
+	fi
+	sleep 1
+	mysql $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error"
+	mysql_stop "$CONFIG_FILE" slave || return 1
 }
 
 function list()
@@ -1522,7 +1617,7 @@ function restore()
 		return 1
 	fi
 	if ! confirm_operation; then
-		return 0
+		return 1
 	fi
 	if ! [ -f "$CONFIG_FILE" ]; then
 		write_out "Cannot find readable file '$CONFIG_FILE'"
@@ -1894,8 +1989,12 @@ function run()
 			remove_lock_file
 			write_out "Finished"
 			;;
-		init)
-			init || return 1
+		init-db)
+			init_db || return 1
+			write_out "Finished"
+			;;
+		init-slave)
+			init_slave || return 1
 			write_out "Finished"
 			;;
 		list)
@@ -1937,8 +2036,9 @@ function usage()
 	echo "   -l   specify format for log file name"
 	echo "   -q   quiet mode - do not print release information"
 	echo "- command:"
-	echo "   init"
 	echo "   backup full|binlog"
+	echo "   init-db"
+	echo "   init-slave"
 	echo "   restore [ -y ] [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
 	echo "   list [-h <hostname> [-P <port>]] full|binlog"
 }

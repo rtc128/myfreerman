@@ -14,7 +14,7 @@ myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] <command> [ <command 
 
 backup full | binlog
 
-init
+init-db
 
 list [ -r <remote server> ] full | binlog
 
@@ -61,7 +61,7 @@ Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
 	binlog: backup binary logs
 
 
-.B init
+.B init-db
 
 Create a new server repository - according to MySQL configuration parameters.
 
