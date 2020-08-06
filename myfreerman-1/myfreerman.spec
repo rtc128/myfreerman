@@ -35,6 +35,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
+* Thu Aug 6 2020 Rodrigo Tassinari 1.4.23
+Fix in init-db: create socket and pidfile directories if they don't exist
+
 * Tue Jun 16 2020 Rodrigo Tassinari 1.4.22
 - Command 'init' changed to 'init-db'
 - New command: 'init-slave'
