@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.22
+RELEASE=1.4.23
 
 function apply_binlog()
 {
@@ -994,6 +994,28 @@ function init_db()
 		fi
 	fi
 
+	#server socket
+	SERVER_SOCKET="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION socket 2>/dev/null`"
+	#create socket's folder and set owner
+	if [ -n "$SERVER_SOCKET" ]; then
+		DNAME="`dirname $SERVER_SOCKET`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
+
+	#pid file
+	PID_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
+	#create pid file's folder and set owner
+	if [ -n "$PID_FILE" ]; then
+		DNAME="`dirname $PID_FILE`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
+
 	echo -n "Please enter new password for root: "
 	read NEW_PASSWORD
 
@@ -1016,12 +1038,10 @@ function init_db()
 	echo "flush privileges;" >>$SQL
 	echo "grant backup_admin on *.* to root;" >>$SQL
 	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
-	mysql --connect-expired-password --socket=$MYSQL_SOCKET -u root "-p$PASSWORD" <$SQL
-
+	mysql --connect-expired-password --socket="$SERVER_SOCKET" -u root "-p$PASSWORD" <$SQL
 	mysql_stop "$CONFIG_FILE" "init"
 	rm $SQL
 }
-
 
 function init_slave()
 {	
