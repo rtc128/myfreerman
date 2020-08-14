@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.23
+RELEASE=1.4.24
 
 function apply_binlog()
 {
@@ -379,6 +379,18 @@ function check_new_db_name()
 
 function check_purge_binlogs()
 {
+	#if this instance is a slave, purge binary logs,
+	#no matter what is configured
+	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
+#slave instances show many lines in 'show slave status
+	COUNT=`mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "show slave status\G" | wc -l`
+	if [ $COUNT -gt 5 ]; then #we're a slave
+		LIMIT_LOG=$1
+		write_out "This instance is a slave server"
+		purge_binlogs $LIMIT_LOG || return 1
+		return
+	fi
+
 	if [ -n "$SLAVE_SERVER" -a $USE_AUX_INSTANCE -eq 0 ]; then
 		LIMIT_LOG=`get_current_slave_binlog`
 	else
@@ -392,15 +404,34 @@ function check_purge_binlogs()
 		write_out "Cannot retrieve slave server's current slave status - no binary log will be purged"
 		return
 	fi
-	write_out "Purging binary logs (limit: $LIMIT_LOG)"
-	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
-	mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
+	purge_binlogs $LIMIT_LOG || return 1
 }
 
 function check_target_instance_config()
 {
 	START_TIMEOUT=60
 	write_out "Checking target instance configuration"
+
+	#pid file
+	PID_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
+	#create pid file's folder and set owner
+	if [ -n "$PID_FILE" ]; then
+		DNAME="`dirname $PID_FILE`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
+
+	#general log file
+	GENERAL_LOG_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION general_log_file 2>/dev/null`"
+	if [ -n "$GENERAL_LOG_FILE" ]; then
+		DNAME="`dirname $GENERAL_LOG_FILE`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
 
 	#create directory for binlog index
 	if [ -n "$BINLOG_INDEX" ]; then
@@ -435,6 +466,16 @@ function check_target_instance_config()
 			chown $MYSQLD_USER "$RELAY_LOG_DIR" || return 1
 		fi
 	fi
+
+	#tmp directory
+	TMP_DIRECTORY="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION tmpdir 2>/dev/null`"
+	if [ -n "$TMP_DIRECTORY" ]; then
+		mkdir -p "$TMP_DIRECTORY" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$TMP_DIRECTORY" || return 1
+		fi
+	fi
+
 
 	LOG_ERROR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	if [ -z "$LOG_ERROR" ]; then
@@ -1311,6 +1352,14 @@ function port_available()
 		return 1
 	fi
 	return 0
+}
+
+function purge_binlogs()
+{
+	LIMIT_LOG=$1
+	write_out "Purging binary logs (limit: $LIMIT_LOG)"
+	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
+	mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
 }
 
 function query()
