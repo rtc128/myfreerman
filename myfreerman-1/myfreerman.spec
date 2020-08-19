@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.4.24
+Release:        1.4.25
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,7 +35,11 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
-* Thu Aug 14 2020 Rodrigo Tassinari 1.4.24
+* Wed Aug 19 2020 Rodrigo Tassinari 1.4.25
+- When using PITR, backup binlogs before starting retore.
+- Fix in restore using aux instance (check GTID mode).
+
+* Fri Aug 14 2020 Rodrigo Tassinari 1.4.24
 - If the instance is a slave, purge all binlogs, even if configuration parameter SLAVE_SERVER is set
 - Minor fixes in building slave servers
 

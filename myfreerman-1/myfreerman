@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.24
+RELEASE=1.4.25
 
 function apply_binlog()
 {
@@ -548,7 +548,7 @@ function copy_recovered_db()
 	fi
 	write_out "Copying recovered database from aux instance"
 	mysql $TARGET_CRED_OPT -e "create database $RESTORE_DB_NEW_NAME;" >/dev/null || return 1
-	mysqldump --socket=$AUX_SOCKET --no-create-db --routines --events --triggers $RESTORE_DB_OLD_NAME | mysql $TARGET_CRED_OPT $RESTORE_DB_NEW_NAME || return 1
+	mysqldump --socket=$AUX_SOCKET --no-create-db --routines --events --triggers --set-gtid-purged=off $RESTORE_DB_OLD_NAME | mysql $TARGET_CRED_OPT $RESTORE_DB_NEW_NAME || return 1
 }
 
 function copy_restored_tables()
@@ -563,7 +563,7 @@ function copy_restored_tables()
 		SCHEMA=`echo $QT | cut -d . -f 1`
 		TABLE=`echo $QT | cut -d . -f 2`
 		write_out "    ${QT}"
-		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers $SCHEMA $TABLE | mysql $TARGET_CRED_OPT $SCHEMA || return 1
+		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers --set-gtid-purged=off $SCHEMA $TABLE | mysql $TARGET_CRED_OPT $SCHEMA || return 1
 	done
 }
 
@@ -604,6 +604,14 @@ function create_aux_config()
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
 	echo "skip-grant-tables=1" >>$AUX_CONFIG
 	echo "user=mysql" >>$AUX_CONFIG
+
+	#copy GTID params to aux config
+	ENFORCE_GTID_CONSISTENCY=`mysql $TARGET_CRED_OPT -e "show variables like 'enforce_gtid_consistency'" | tail -n 1 | cut -f 2 -d$'\t'`
+	echo "enforce_gtid_consistency=$ENFORCE_GTID_CONSISTENCY" >>$AUX_CONFIG
+
+	GTID_MODE=`mysql $TARGET_CRED_OPT -e "show variables like 'gtid_mode'" | tail -n 1 | cut -f 2 -d$'\t'`
+	echo "gtid_mode=$GTID_MODE" >>$AUX_CONFIG
+
 	echo "[mysql]" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
@@ -1635,7 +1643,7 @@ function restore()
 	ANSWER_YES=0
 	CUR_SOCKET="$DB_SOCKET"
 	local OPTIND l_opt
-	while getopts ":d:no:p:st:x:y" l_opt; do
+	while getopts "d:no:p:st:x:y" l_opt; do
 		case $l_opt in
 			d)
 				RESTORE_DB_OLD_NAME=${OPTARG}
@@ -1648,8 +1656,8 @@ function restore()
 				;;
 			p)
 				PITR=1
-				REQ_TIMESTAMP=${OPTARG}
-				ISO_REQ_TIMESTAMP=${OPTARG/_/ }
+				REQ_TIMESTAMP="${OPTARG}"
+				ISO_REQ_TIMESTAMP="${OPTARG/_/ }"
 				DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
 				;;
 			s)
@@ -1773,6 +1781,9 @@ function restore()
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
 		AUX_UNDODIR="${AUX_BASEDIR}/${UNDODIR}"
 		CUR_SOCKET="$AUX_SOCKET"
+
+		#ensure binlog backups are up to date, because requested timestamp might be after last saved binlog
+		backup_binlog || return 1
 	fi
 	check_new_db_name || return 1
 	write_out "Starting restore"
