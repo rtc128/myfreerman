@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.25
+RELEASE=1.4.26
 
 function apply_binlog()
 {
@@ -409,7 +409,7 @@ function check_purge_binlogs()
 
 function check_target_instance_config()
 {
-	START_TIMEOUT=60
+	START_TIMEOUT=300
 	write_out "Checking target instance configuration"
 
 	#pid file
@@ -899,7 +899,7 @@ function header()
 
 function kill_pid()
 {
-	WAIT_TIMEOUT=15
+	WAIT_TIMEOUT=45
 	PID_FILE="$1"
 	PID=`cat "$PID_FILE"`
 	kill $PID
@@ -1306,7 +1306,7 @@ function mysql_start()
 {
 	CONFIG="$1"
 	INST_TYPE="$2"
-	START_TIMEOUT=60
+	START_TIMEOUT=300
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
 	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
@@ -1334,7 +1334,7 @@ function mysql_stop()
 {
 	CONFIG="$1"
 	INST_TYPE="$2"
-	STOP_TIMEOUT=60
+	STOP_TIMEOUT=300
 	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	write_out "Stopping server (${INST_TYPE})"
@@ -2125,7 +2125,7 @@ function usage()
 
 function wait_server_start()
 {
-	START_TIMEOUT=60
+	START_TIMEOUT=300
 	PID=$1
 	CONF_FILE="$2"
 	LOG_ERROR="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
