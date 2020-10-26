@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.26
+RELEASE=1.4.27
 
 function apply_binlog()
 {
@@ -384,7 +384,7 @@ function check_purge_binlogs()
 	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
 #slave instances show many lines in 'show slave status
 	COUNT=`mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "show slave status\G" | wc -l`
-	if [ $COUNT -gt 5 ]; then #we're a slave
+	if [ -z "$SLAVE_SERVER" -a $COUNT -gt 5 ]; then #we're a slave
 		LIMIT_LOG=$1
 		write_out "This instance is a slave server"
 		purge_binlogs $LIMIT_LOG || return 1
