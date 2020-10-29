@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.27
+RELEASE=1.4.28
 
 function apply_binlog()
 {
@@ -131,7 +131,7 @@ function backup_full()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		mysqlbackup $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="${DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
+		mysqlbackup $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -140,7 +140,7 @@ function backup_full()
 			return 1
 		fi
 	else
-		mysqlbackup $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="${DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
+		mysqlbackup $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -1490,6 +1490,13 @@ function read_config()
 	#default: 0
 	if [ -z "${READ_ONLY}" ]; then
 		READ_ONLY=0
+	fi
+
+	#process threads
+	PROCESS_THREADS="`crudini --get "$CONFIG_FILE" $INI_SECTION process_threads 2>/dev/null`"
+	#default: 1
+	if [ -z "$PROCESS_THREADS" ]; then
+		PROCESS_THREADS=1
 	fi
 
 	#read threads

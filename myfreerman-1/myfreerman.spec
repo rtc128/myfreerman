@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.4.27
+Release:        1.4.28
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,7 +35,10 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
-* Tue Oct 26 2020 Rodrigo Tassinari 1.4.27
+* Thu Oct 29 2020 Rodrigo Tassinari 1.4.28
+- New config variable: process_threads (number of processing threads for backup)
+
+* Mon Oct 26 2020 Rodrigo Tassinari 1.4.27
 - Bug fix in slave server identification
 
 * Tue Oct 20 2020 Rodrigo Tassinari 1.4.26
