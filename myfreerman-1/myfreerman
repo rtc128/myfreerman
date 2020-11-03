@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.28
+RELEASE=1.4.29
 
 function apply_binlog()
 {
@@ -82,6 +82,12 @@ function backup_binlog()
 
 	#flush logs
 	mysqladmin $TARGET_CRED_OPT flush-logs || return 1
+
+	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
+	if [ -n "$BINLOG_PREFIX" ]; then
+		BINLOG_DIR="`dirname $BINLOG_PREFIX`" || return 1
+		BINLOG_BNAME="`basename $BINLOG_PREFIX`" || return 1
+	fi
 
 	#list binlogs, just ignoring the last one
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
@@ -825,21 +831,34 @@ function get_oldest_full_backup()
 
 function get_current_slave_binlog()
 {
-	SLAVE_HOSTNAME=`echo $SLAVE_SERVER | cut -d \: -f 1`
-	SLAVE_PORT=`echo $SLAVE_SERVER | cut -d \: -f 2`
-	if [ -z  "$SLAVE_PORT" ]; then
-		SLAVE_PORT=3306
-	fi
-	SLAVE_CRED_OPT=`mount_slave_credentials_opt`
+	MIN_LOG=999999
+	SLAVE_SERVERS=`echo $SLAVE_SERVER | tr "," "\n"`
+	for S in $SLAVE_SERVERS; do
+		SLAVE_HOSTNAME=`echo $S | cut -d \: -f 1`
+		SLAVE_PORT=`echo $S | cut -d \: -f 2`
+		if [ -z  "$SLAVE_PORT" ]; then
+			SLAVE_PORT=3306
+		fi
+		SLAVE_CRED_OPT=`mount_slave_credentials_opt`
 
 #before getting slave status, check if we can reach it
-	RESULT=1
-	if mysqladmin $SLAVE_CRED_OPT status >/dev/null; then
-		if mysql $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'; then
-			RESULT=0
+		RESULT=1
+		if mysqladmin $SLAVE_CRED_OPT status >/dev/null; then
+			CUR_LOG=`mysql $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
+			if [ $? -ne 0 ]; then
+				return $?
+			fi
+			CUR_LOG=`echo $CUR_LOG | cut -d . -f 2`
+			if [ $CUR_LOG -lt $MIN_LOG ]; then
+				MIN_LOG=$CUR_LOG
+			fi
+		else
+			return 1
 		fi
-	fi
-	return $RESULT
+	done
+	LONG_LOGSEQ=`seq -f "%06g" $MIN_LOG $MIN_LOG`
+	echo ${BINLOG_BNAME}.${LONG_LOGSEQ}
+	return 0
 }
 
 function get_master_config()
@@ -988,6 +1007,7 @@ function init_db()
 	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
 		BINLOG_DIR="`dirname $BINLOG_PREFIX`" || return 1
+		BINLOG_BNAME="`basename $BINLOG_PREFIX`" || return 1
 		mkdir -p "$BINLOG_DIR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$BINLOG_DIR" || return 1
