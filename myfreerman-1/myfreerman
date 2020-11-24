@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.29
+RELEASE=1.4.30
 
 function apply_binlog()
 {
@@ -1128,20 +1128,8 @@ function init_slave()
 	#query binlog info at the time of the backup
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 
-	MASTER_BINLOG=`mysql $TARGET_CRED_OPT -e "show master status\G" | grep -wi file | cut -d : -f 2 | tr -d \ `
-	if [ -z "$MASTER_BINLOG" ]; then
-		mysql_stop slave
-		return 1
-	fi
-
-	MASTER_POS=`mysql $TARGET_CRED_OPT -e "show master status\G" | grep -wi Position | cut -d : -f 2 | tr -d \ `
-	if [ -z "$MASTER_POS" ]; then
-		mysql_stop slave
-		return 1
-	fi
-
 	#mount command to config slave
-	CMD="change master to master_host='$MASTER_HOST', master_port=$MASTER_PORT, master_log_file='$MASTER_BINLOG', master_log_pos=$MASTER_POS, master_ssl=1, master_user='$REPL_USERNAME', master_password='$REPL_PASSWD'";
+	CMD="change master to master_host='$MASTER_HOST', master_port=$MASTER_PORT, master_auto_position=1, master_ssl=1, master_user='$REPL_USERNAME', master_password='$REPL_PASSWD'";
 	write_out "Setting new slave configuration"
 	if ! mysql $TARGET_CRED_OPT -e "$CMD"; then
 		mysql_stop "$CONFIG_FILE" slave || return 1
@@ -1967,14 +1955,16 @@ function restore_target_instance()
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG_FILE --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
+	if [ $SLAVE -eq 0 ]; then
 #===========================================
 #Rodrigo Tassinari - 2020-03-11
 #BUG in MEB 8.0.18:
 #Binary log index informed in --log-bin-index is appended a text ".index", and manual does not say that
 #So, we rename it
-	BUG_BINLOG_INDEX="${BINLOG_INDEX}.index" 
-	mv "$BUG_BINLOG_INDEX" "$BINLOG_INDEX" || return 1
+		BUG_BINLOG_INDEX="${BINLOG_INDEX}.index" 
+		mv "$BUG_BINLOG_INDEX" "$BINLOG_INDEX" || return 1
 #===========================================
+	fi
 	if [ -n "$MYSQLD_USER" ]; then
 		write_out "Setting permissions"
 		chown -R $MYSQLD_USER "$DATADIR" || return 1
