@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.31
+RELEASE=1.4.32
 
 function apply_binlog()
 {
@@ -931,6 +931,92 @@ function kill_pid()
 		fi
 		sleep 1
 	done
+}
+
+function drop_db()
+{
+	ANSWER_YES=0
+	while getopts "y" l_opt; do
+		case $l_opt in
+			y)
+				ANSWER_YES=1
+				;;
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				return 1
+				;;
+			: )
+				echo "Invalid option: $OPTARG requires an argument" 1>&2
+				return 1
+				;;
+		esac
+	done
+	PID_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
+	if [ -f "$PID_FILE" ]; then
+		PID=`cat "$PID_FILE"`
+		if kill -0 $PID; then
+			write_out "Server is running - cannot drop database"
+			return 1
+		fi
+	fi
+	if ! confirm_operation; then
+		return 1
+	fi
+	write_out "Dropping database"
+
+	#datadir
+	DATADIR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION datadir`" 2>/dev/null
+	if [ "$DATADIR" == "/" ]; then
+		write_out "Invalid data directory (datadir)"
+		return 1
+	fi
+	if [ -n "$DATADIR" ]; then
+		rm -fr "$DATADIR/"* || return 1
+	fi
+
+	#redo
+	REDODIR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION innodb_log_group_home_dir 2>/dev/null`"
+	if [ "$REDODIR" == "/" ]; then
+		write_out "Invalid redo directory"
+		return 1
+	fi
+	if [ -n "$REDODIR" ]; then
+		rm -fr "$REDODIR/"* || return 1
+	fi
+
+	#undo
+	UNDODIR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION innodb_undo_directory 2>/dev/null`"
+	if [ "$UNDODIR" == "/" ]; then
+		write_out "Invalid undo directory"
+		return 1
+	fi
+	if [ -n "$UNDODIR" ]; then
+		rm -fr "$UNDODIR/"* || return 1
+	fi
+
+	#binlog index file
+	BINLOG_INDEX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin_index 2>/dev/null`"
+	if [ -n "$BINLOG_INDEX" ]; then
+		rm -f "$BINLOG_INDEX" || return 1
+	fi
+
+	#relay index file
+	RELAY_LOG_INDEX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION relay_log_index 2>/dev/null`"
+	if [ -n "$RELAY_LOG_INDEX" ]; then
+		rm -f "$RELAY_LOG_INDEX" || return 1
+	fi
+
+	#binlogs directory
+	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
+	if [ -n "$BINLOG_PREFIX" ]; then
+		rm -f "${BINLOG_PREFIX}"* || return 1
+	fi
+
+	#relay logs directory
+	RELAY_LOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION relay_log 2>/dev/null`"
+	if [ -n "$RELAY_LOG_PREFIX" ]; then
+		rm -f "${RELAY_LOG_PREFIX}"* || return 1
+	fi
 }
 
 function init_db()
@@ -2084,6 +2170,10 @@ function run()
 				return 1
 			fi
 			remove_lock_file
+			write_out "Finished"
+			;;
+		drop-db)
+			drop_db || return 1
 			write_out "Finished"
 			;;
 		init-db)

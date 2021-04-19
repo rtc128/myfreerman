@@ -14,6 +14,8 @@ myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] <command> [ <command 
 
 backup full | binlog
 
+drop-db
+
 init-db
 
 init-slave
@@ -62,6 +64,10 @@ Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
 
 	binlog: backup binary logs
 
+
+.B drop-db
+
+Drop current database (data files, binlogs, relay logs, redo and undo).
 
 .B init-db
 
