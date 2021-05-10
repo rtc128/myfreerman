@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.32
+RELEASE=1.4.33
 
 function apply_binlog()
 {
@@ -143,6 +143,7 @@ function backup_full()
 		cat $TMP_LOG >>"$LOG_FILE"
 		rm $TMP_LOG
 		if [ $RETCODE -ne 0 ]; then
+			rm -fr "$DIRECTORY"
 			return 1
 		fi
 	else
