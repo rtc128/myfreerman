@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.34
+RELEASE=1.4.35
 
 function apply_binlog()
 {
@@ -130,13 +130,14 @@ function backup_full()
 		return 1
 	fi
 	cd "$BACKUP_DIR" || return 1
+	mkdir -p "$TMP_BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	DATE_VAL=`date +%Y-%m-%d`
 	TIME_VAL=`date +%H-%M-%S`
 	TIMESTAMP=${DATE_VAL}_${TIME_VAL}
-	TMP_DIRECTORY=`mktemp -d "${BASE_BACKUP_DIR}/.bkp-XXXXXX"` || return 1
-	DIRECTORY="${BASE_BACKUP_DIR}/${TIMESTAMP}"
-	IMAGE_FILE="${BASE_BACKUP_DIR}/${TIMESTAMP}.dat"
+	TMP_DIRECTORY="${TMP_BACKUP_DIR}/${TIMESTAMP}" || return 1
+	mkdir "${TMP_DIRECTORY}" || return 1
+	DIRECTORY="${BASE_BACKUP_DIR}/${TIMESTAMP}" || return 1
 	LIM_MEM_OPT=`mount_limit_memory_option`
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
@@ -160,9 +161,8 @@ function backup_full()
 		rm -fr "${TMP_DIRECTORY}"
 		return 1
 	fi
-	#rename temp directory to official on
-	read
-	mv "${TMP_DIRECTORY}" "${DIRECTORY}" || return 1
+	#move tmp directory to permanent dst
+	mv "${TMP_DIRECTORY}" "${BASE_BACKUP_DIR}" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	LAST_BACKUP=`ls | tail -n 1` || return 1
 	write_out "Saving config file"
@@ -1796,6 +1796,7 @@ function restore()
 		esac
 	done
 	restore_validate_options || return 1
+	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 	DIR=
@@ -2160,6 +2161,7 @@ function run()
 	fi
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	MYHOST=`hostname`
+	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 	RESTORE_BACKUP_DIR="$BACKUP_DIR/restore"
