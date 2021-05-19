@@ -8,7 +8,7 @@ myfreerman \- administer mysql backups
 
 .SH SYNOPSIS
 
-myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] <command> [ <command options and arguments ...> ]
+myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ <command options and arguments ...> ]
 
 .B commands
 
@@ -22,7 +22,7 @@ init-slave
 
 list [ -r <remote server> ] full | binlog
 
-restore [ -y ] [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]
+restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]
 
 .SH DESCRIPTION
 
@@ -53,8 +53,9 @@ Exemple: MYSQL_SID=dev => sections are mysqld@dev and myfreerman@dev.
 
 -l Print output to log file. Variables in format are the same as in "date" command.
 
--q Quiet mode - do not show release information
+-q Quiet mode - do not show release information.
 
+-y Assume YES to all questions.
 
 .B backup
 
@@ -103,8 +104,6 @@ Server config file must exist.
    -t Restore only specific table(s). Cannot be used with -d.
 
    -s Slave mode: do not apply binlogs after restoration. Needed when mounting a slave server.
-   
-   -y Assume YES to confirmation.
 
 .SH SEE ALSO
 

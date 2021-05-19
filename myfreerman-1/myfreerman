@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.35
+RELEASE=1.4.36
 
 function apply_binlog()
 {
@@ -947,12 +947,9 @@ function kill_pid()
 
 function drop_db()
 {
-	ANSWER_YES=0
-	while getopts "y" l_opt; do
+	local OPTIND l_opt
+	while getopts "" l_opt; do
 		case $l_opt in
-			y)
-				ANSWER_YES=1
-				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
 				return 1
@@ -1753,10 +1750,9 @@ function restore()
 	RESTORE_TABLE_LIST=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
 	SLAVE=0
-	ANSWER_YES=0
 	CUR_SOCKET="$DB_SOCKET"
 	local OPTIND l_opt
-	while getopts "d:no:p:st:x:y" l_opt; do
+	while getopts "d:no:p:st:x:" l_opt; do
 		case $l_opt in
 			d)
 				RESTORE_DB_OLD_NAME=${OPTARG}
@@ -1781,9 +1777,6 @@ function restore()
 				;;
 			x)
 				RESTORE_DB_NEW_NAME=${OPTARG}
-				;;
-			y)
-				ANSWER_YES=1
 				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
@@ -2129,8 +2122,9 @@ function run()
 {
 	CONFIG_FILE=/etc/my.cnf
 	LOG_FILE_BASENAME=
+	ANSWER_YES=0
 	QUIET=0
-	while getopts "l:c:q" opt; do
+	while getopts "l:c:qy" opt; do
 		case $opt in
 			l)
 				LOG_FILE_BASENAME=`date "+$OPTARG"` || return 1
@@ -2140,6 +2134,9 @@ function run()
 				;;
 			q)
 				QUIET=1
+				;;
+			y)
+				ANSWER_YES=1
 				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
@@ -2185,7 +2182,7 @@ function run()
 			write_out "Finished"
 			;;
 		drop-db)
-			drop_db || return 1
+			drop_db $* || return 1
 			write_out "Finished"
 			;;
 		init-db)
