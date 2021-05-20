@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.36
+RELEASE=1.4.37
 
 function apply_binlog()
 {
@@ -1215,7 +1215,8 @@ function init_slave()
 		echo "Cannot find directory" >&2
 		return 1
 	fi
-	restore -y -s -o "$DIR" || exit 1
+	ANSWER_YES=1
+	restore -s -o "$DIR" || exit 1
 
 	#start server
 	mysql_start "$CONFIG_FILE" slave || return 1
@@ -2223,16 +2224,18 @@ function uncompress_backup()
 
 function usage()
 {
-	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] <command> [ <cmd options> ]"
+	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ <cmd options> ]"
 	echo "- options:"
 	echo "   -c   use a specific config file"
 	echo "   -l   specify format for log file name"
 	echo "   -q   quiet mode - do not print release information"
+	echo "   -y   assume YES for all questions"
 	echo "- command:"
 	echo "   backup full|binlog"
+	echo "   drop-db"
 	echo "   init-db"
 	echo "   init-slave"
-	echo "   restore [ -y ] [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
+	echo "   restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
 	echo "   list [-h <hostname> [-P <port>]] full|binlog"
 }
 
