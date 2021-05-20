@@ -35,7 +35,7 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 
 %changelog
 
-* Thu May 10 2021 Rodrigo Tassinari 1.4.37
+* Thu May 20 2021 Rodrigo Tassinari 1.4.37
 - Minor fix in docs
 - Fix in broken 'init-slave' command
 
