@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.4.38
+Release:        1.4.39
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -34,6 +34,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Tue May 25 2021 Rodrigo Tassinari 1.4.39
+- Major fix in config file access
 
 * Tue May 25 2021 Rodrigo Tassinari 1.4.38
 - New option in PITR: restore a table with a new table name
