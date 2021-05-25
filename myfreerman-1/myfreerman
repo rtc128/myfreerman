@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.4.38
+RELEASE=1.5.0
 
 function apply_binlog()
 {
@@ -165,9 +165,6 @@ function backup_full()
 	cp "$CONFIG_FILE" "$DIRECTORY/my.cnf" || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
 	backup_binlog || return 1
-	if [ -n "$RETENTION_PERIOD" ]; then
-		remove_old_backups || return 1
-	fi
 }
 
 function binlog_backup_exists()
@@ -1617,9 +1614,6 @@ function read_config()
 		READ_THREADS=1
 	fi
 
-	#retention period
-	RETENTION_PERIOD="`crudini --get "$CONFIG_FILE" $INI_SECTION retention_period 2>/dev/null`"
-
 	#slave server
 	SLAVE_SERVER="`crudini --get "$CONFIG_FILE" $INI_SECTION slave_server 2>/dev/null`"
 
@@ -1698,13 +1692,20 @@ function remove_lock_file()
 	fi
 }
 
-function remove_old_backups()
+function remove_expired_backups()
 {
-	remove_old_full_backups || return 1
-	remove_old_binlog_backups || return 1
+	#retention period
+	RETENTION_PERIOD="`crudini --get "$CONFIG_FILE" $INI_SECTION retention_period 2>/dev/null`"
+	if [ -z "$RETENTION_PERIOD" ]; then
+		write_out "Configuration 'retention_period' is required"
+		return 1
+	fi
+
+	remove_expired_full_backups || return 1
+	remove_expired_binlog_backups || return 1
 }
 
-function remove_old_binlog_backups()
+function remove_expired_binlog_backups()
 {
 	cd "${BINLOG_BACKUP_DIR}" || return 1
 	OLDEST_BKP=`ls ${BASE_BACKUP_DIR} | head -n 1`
@@ -1718,7 +1719,7 @@ function remove_old_binlog_backups()
 	done
 }
 
-function remove_old_full_backups()
+function remove_expired_full_backups()
 {
 	REF_TIMESTAMP=`date --date="-$RETENTION_PERIOD days" +%Y%m%d%H%M%S`
 	cd "$BACKUP_DIR" || return 1
@@ -1745,6 +1746,12 @@ function remove_old_full_backups()
 		fi
 		PREV_BKP=$BKP
 	done
+}
+
+function remove_usage()
+{
+	echo "Help:" >&2
+	echo "	remove expired"
 }
 
 function reset_master()
@@ -2165,7 +2172,7 @@ function run()
 		esac
 	done
 	shift $((OPTIND-1))
-	if [ ${CONFIG_FILE:1:1} != "/" ]; then
+	if [ ${CONFIG_FILE:0:1} != "/" ]; then
 		CONFIG_FILE="${PWD}/${CONFIG_FILE}"
 	fi
 
@@ -2206,6 +2213,10 @@ function run()
 			fi
 			write_out "Finished"
 			;;
+		remove)
+			run_remove $* || return 1
+			write_out "Finished"
+			;;
 		drop-db)
 			drop_db $* || return 1
 			write_out "Finished"
@@ -2234,6 +2245,34 @@ function run()
 				echo "Invalid command: $CMD" >&2
 			fi
 			usage
+			return 1
+			;;
+	esac
+}
+
+function run_remove()
+{
+	local OPTIND l_opt
+	while getopts "" opt; do
+		case $opt in
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				remove_usage
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 1 ]; then
+		remove_usage
+		return 1
+	fi
+	case $1 in
+		expired)
+			remove_expired_backups || return 1
+			;;
+		*)
+			remove_usage
 			return 1
 			;;
 	esac
