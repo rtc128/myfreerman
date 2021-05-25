@@ -741,7 +741,6 @@ function find_base_backup()
 function fix_backup_timestamp()
 {
 	BACKUP=$1
-	write_out "Fixing backup $BACKUP timestamp"
 	cd $BASE_BACKUP_DIR || return 1
 	LOGSEQ=`get_base_backup_binlog_sequence $BACKUP` || return 1
 	POSITION=`get_base_backup_binlog_position $BACKUP` || return 1
