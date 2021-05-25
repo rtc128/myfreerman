@@ -865,6 +865,9 @@ function get_current_slave_binlog()
 				return $?
 			fi
 			CUR_LOG=`echo $CUR_LOG | cut -d . -f 2`
+			if [ -z "$CUR_LOG" ]; then
+				return 1
+			fi
 			if [ $CUR_LOG -lt $MIN_LOG ]; then
 				MIN_LOG=$CUR_LOG
 			fi
@@ -1212,15 +1215,42 @@ function init_db()
 }
 
 function init_slave()
-{	
-	get_master_config || return 1
-	read -e -p "Directory with master backup: " DIR
-	if ! [ -d "$DIR" ]; then
-		echo "Cannot find directory" >&2
+{
+	local OPTIND l_opt
+	while getopts "" l_opt; do
+		case $l_opt in
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				init_slave_usage
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+
+	if [ $# -ne 3 ]; then
+		init_slave_usage
+		return 1
+	fi
+
+	MASTER_HOST=$1
+	MASTER_PORT=`echo $MASTER_HOST | cut -s -d \: -f 2`
+	if [ -z "$MASTER_PORT" ]; then
+		MASTER_PORT=3306
+	fi
+	REPL_USERNAME=$2
+	BACKUP_DIRECTORY="$3"
+
+	read -s -p "Replication user password: " REPL_PASSWD
+	if [ -z "$REPL_PASSWD" ]; then
+		return 1
+	fi
+
+	if ! mysqladmin -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USERNAME -p"${REPL_PASSWD}" status >/dev/null; then
 		return 1
 	fi
 	ANSWER_YES=1
-	restore -s -o "$DIR" || exit 1
+	restore -s -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
 	mysql_start "$CONFIG_FILE" slave || return 1
@@ -1242,6 +1272,12 @@ function init_slave()
 	sleep 1
 	mysql $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error"
 	mysql_stop "$CONFIG_FILE" slave || return 1
+}
+
+function init_slave_usage()
+{
+	echo "Help:"
+	echo "	init-slave <master hostname>[:<port>] <replication username> <backup directory>"
 }
 
 function list()
@@ -1694,6 +1730,9 @@ function remove_lock_file()
 
 function remove_expired_backups()
 {
+	if ! confirm_operation; then
+		return 1
+	fi
 	#retention period
 	RETENTION_PERIOD="`crudini --get "$CONFIG_FILE" $INI_SECTION retention_period 2>/dev/null`"
 	if [ -z "$RETENTION_PERIOD" ]; then
@@ -2226,13 +2265,16 @@ function run()
 			write_out "Finished"
 			;;
 		init-slave)
-			init_slave || return 1
+			init_slave $* || return 1
 			write_out "Finished"
 			;;
 		list)
 			if ! list $*; then
 				return 1
 			fi
+			;;
+		recover)
+			recover $* || return 1
 			;;
 		restore)
 			if ! restore $*; then
@@ -2287,12 +2329,20 @@ function uncompress_backup()
 
 function usage()
 {
-	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ <cmd options> ]"
+	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ <arguments> ]"
 	echo "- options:"
 	echo "   -c   use a specific config file"
 	echo "   -l   specify format for log file name"
 	echo "   -q   quiet mode - do not print release information"
 	echo "   -y   assume YES for all questions"
+	echo "- commands:"
+	echo "	backup"
+	echo "	list"
+	echo "	init-db"
+	echo "	init-slave"
+	echo "	drop-db"
+	echo "	recover"
+	echo "	remove"
 }
 
 function wait_server_start()

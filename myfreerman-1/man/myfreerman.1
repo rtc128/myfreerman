@@ -18,9 +18,11 @@ drop-db
 
 init-db
 
-init-slave
+init-slave <host>[:<port>] <user> <dir>
 
 list [ -r <remote server> ] full | binlog
+
+remove expired
 
 restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]
 
@@ -41,6 +43,8 @@ It adds support for:
 - Recovery window maintenance
 
 - Creating a new database repository
+
+- Creating a new slave server
 
 .SH CONFIGURATION
 
@@ -76,13 +80,27 @@ Create a new server repository - according to MySQL configuration parameters.
 
 .B init-slave
 
+init-slave <host>[:<port>] <user> <dir>
+
 Initialize a new slave server, using a backup from master server.
+
+	host: master hostname (optional port number, if not default port)
+
+	user: replication username created in master
+
+	dir: master backup directory
 
 .B list
 
 List current backups. List \fBfull\fR or \fBbinlog\fR backups.
 
 	-r List backups from remote mysql server.
+
+.B remove
+
+Remove backups.
+	
+   expired: Remove expired backups, according to retention_period (configuration 'retention_period').
 
 .B restore
 
