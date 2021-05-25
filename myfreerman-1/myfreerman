@@ -1,15 +1,11 @@
 #!/bin/bash
-RELEASE=1.4.37
+RELEASE=1.4.38
 
 function apply_binlog()
 {
 	FILENAME="$1"
 	SOCKET="$2"
 	mysql --socket="$SOCKET" <"$FILENAME" || return 1
-	#rotate binlogs
-	mysqladmin --socket="$SOCKET" flush-logs || return 1
-	CUR_BINLOG=`tail "$BINLOG_INDEX"` || return 1
-	BN="`basename \"$CUR_BINLOG\"`" || return 1
 }
 
 function backup()
@@ -580,8 +576,19 @@ function copy_restored_tables()
 		fi
 		SCHEMA=`echo $QT | cut -d . -f 1`
 		TABLE=`echo $QT | cut -d . -f 2`
+		ORIG_TABLE=`echo $TABLE | cut -d \: -f 1`
+		NEW_TABLE=`echo $TABLE | cut -d \: -f 2`
+		if [ -z "$NEW_TABLE" ]; then
+			NEW_TABLE=$ORIG_TABLE
+		fi
 		write_out "    ${QT}"
-		mysqldump --defaults-file=$AUX_CONFIG --no-create-db --routines --events --triggers --set-gtid-purged=off $SCHEMA $TABLE | mysql $TARGET_CRED_OPT $SCHEMA || return 1
+		mysqldump --defaults-file=$AUX_CONFIG --skip-lock-tables --no-create-db --routines --events --triggers --set-gtid-purged=off $SCHEMA $ORIG_TABLE | \
+				sed	-e s/^\\\(drop\ table\ if\ exists\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
+						-e s/^\\\(create\ table\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
+						-e s/^\\\(insert\ into\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
+						-e s/^\\\(lock\ tables\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
+						-e s/^\\\(.*alter\ table\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
+						| mysql $TARGET_CRED_OPT $SCHEMA || return 1
 	done
 }
 
@@ -1747,6 +1754,7 @@ function reset_master()
 
 function restore()
 {
+	DB_COPY=0
 	PITR=0
 	RESTORE_TABLE_LIST=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
@@ -1768,7 +1776,6 @@ function restore()
 				PITR=1
 				REQ_TIMESTAMP="${OPTARG}"
 				ISO_REQ_TIMESTAMP="${OPTARG/_/ }"
-				DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
 				;;
 			s)
 				SLAVE=1
@@ -1789,6 +1796,11 @@ function restore()
 				;;
 		esac
 	done
+	shift $((OPTIND-1))
+	if [ $# -ne 0 ]; then
+		restore_help
+		return 1
+	fi
 	restore_validate_options || return 1
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
@@ -1796,6 +1808,9 @@ function restore()
 	DIR=
 	if cd "$BASE_BACKUP_DIR" 2>/dev/null; then
 		DIR=`ls | tail -n 1 | cut -d . -f 1`
+	fi
+	if [ $PITR -eq 1 ]; then
+		DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
 	fi
 	if [ -z "$DIR" ]; then
 		write_out "No backup to be restored"
@@ -1824,7 +1839,6 @@ function restore()
 		fi
 		BINLOG_PREFIX=`mysql $TARGET_CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
 	fi
-	DB_COPY=0
 	MOMENT=`date +%Y%m%d-%H%M%S`
 	AUX_SOCKET_OPT=
 	if ! [ -d "$BASE_BACKUP_DIR" ]; then
@@ -1974,6 +1988,12 @@ function restore_aux_instance()
 		chown $MYSQLD_USER "$AUX_LOG_ERROR" || return 1
 		chown -R $MYSQLD_USER "$AUX_BASEDIR" || return 1
 	fi
+}
+
+function restore_help()
+{
+	echo "Help:" >&2
+	echo "	restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>> [ ... ] ] ] ]" >&2
 }
 
 function restore_target_instance()
@@ -2145,6 +2165,10 @@ function run()
 		esac
 	done
 	shift $((OPTIND-1))
+	if [ ${CONFIG_FILE:1:1} != "/" ]; then
+		CONFIG_FILE="${PWD}/${CONFIG_FILE}"
+	fi
+
 	if [ $QUIET -eq 0 ]; then
 		header
 	fi
@@ -2230,18 +2254,11 @@ function usage()
 	echo "   -l   specify format for log file name"
 	echo "   -q   quiet mode - do not print release information"
 	echo "   -y   assume YES for all questions"
-	echo "- command:"
-	echo "   backup full|binlog"
-	echo "   drop-db"
-	echo "   init-db"
-	echo "   init-slave"
-	echo "   restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1> [ -t <schema2.table2> [ ... ] ] ] ]"
-	echo "   list [-h <hostname> [-P <port>]] full|binlog"
 }
 
 function wait_server_start()
 {
-	START_TIMEOUT=300
+	START_TIMEOUT=600
 	PID=$1
 	CONF_FILE="$2"
 	LOG_ERROR="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
