@@ -5,7 +5,7 @@ function apply_binlog()
 {
 	FILENAME="$1"
 	SOCKET="$2"
-	mysql --socket="$SOCKET" <"$FILENAME" || return 1
+	mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$FILENAME" || return 1
 }
 
 function backup()
@@ -676,6 +676,33 @@ function drop_target_database()
 function expand_logfile_path()
 {
 	date "+$1"
+}
+
+function expand_timestamp()
+{
+	TS=$1
+	if [ ${#TS} -eq 4 ]; then
+		H=${TS:0:2}
+		M=${TS:2:2}
+		date +%Y-%m-%d_${H}:${M}:00 || return 1
+		return
+	fi
+	if [ ${#TS} -eq 6 ]; then
+		D=${TS:0:2}
+		H=${TS:2:2}
+		M=${TS:4:2}
+		date +%Y-%m-${D}_${H}:${M}:00 || return 1
+		return
+	fi
+	if [ ${#TS} -eq 8 ]; then
+		MON=${TS:0:2}
+		D=${TS:2:2}
+		H=${TS:4:2}
+		MIN=${TS:6:2}
+		date +%Y-${MON}-${D}_${H}:${MIN}:00 || return 1
+		return
+	fi
+	echo $TS
 }
 
 function exist_base_backup()
@@ -1817,8 +1844,7 @@ function restore()
 				;;
 			p)
 				PITR=1
-				REQ_TIMESTAMP="${OPTARG}"
-				ISO_REQ_TIMESTAMP="${OPTARG/_/ }"
+				USER_TIMESTAMP="${OPTARG}"
 				;;
 			s)
 				SLAVE=1
@@ -1845,6 +1871,11 @@ function restore()
 		return 1
 	fi
 	restore_validate_options || return 1
+	if [ $PITR -eq 1 ]; then
+		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
+		write_out "Requested timestamp: $REQ_TIMESTAMP"
+		ISO_REQ_TIMESTAMP="${OPTARG/$REQ_TIMESTAMP/ }"
+	fi
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
@@ -2243,14 +2274,11 @@ function run()
 			query $* || return 1
 			;;
 		backup)
-			if ! backup $*; then
-				remove_lock_file
-				return 1
-			fi
+			backup $* || return 1
 			write_out "Finished"
 			;;
 		remove)
-			run_remove $* || return 1
+			remove $* || return 1
 			write_out "Finished"
 			;;
 		drop-db)
@@ -2258,7 +2286,7 @@ function run()
 			write_out "Finished"
 			;;
 		init-db)
-			init_db || return 1
+			init_db $* || return 1
 			write_out "Finished"
 			;;
 		init-slave)
@@ -2266,17 +2294,10 @@ function run()
 			write_out "Finished"
 			;;
 		list)
-			if ! list $*; then
-				return 1
-			fi
-			;;
-		recover)
-			recover $* || return 1
+			list $* || return 1
 			;;
 		restore)
-			if ! restore $*; then
-				return 1
-			fi
+			restore $* || return 1
 			write_out "Finished"
 			;;
 		*)
@@ -2289,7 +2310,7 @@ function run()
 	esac
 }
 
-function run_remove()
+function remove()
 {
 	local OPTIND l_opt
 	while getopts "" opt; do
