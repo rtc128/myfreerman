@@ -584,6 +584,9 @@ function copy_restored_tables()
 						-e s/^\\\(lock\ tables\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
 						-e s/^\\\(.*alter\ table\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
 						| mysql $TARGET_CRED_OPT $SCHEMA || return 1
+
+		mysqldump --defaults-file=$AUX_CONFIG --skip-lock-tables --no-create-db --routines --events --triggers --set-gtid-purged=off --result-file /tmp/mysqldump.log $SCHEMA $ORIG_TABLE
+		echo /tmp/mysqldump.log
 	done
 }
 
@@ -1874,8 +1877,8 @@ function restore()
 	if [ $PITR -eq 1 ]; then
 		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
 		write_out "Requested timestamp: $REQ_TIMESTAMP"
-		ISO_REQ_TIMESTAMP="${OPTARG/$REQ_TIMESTAMP/ }"
 	fi
+	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
