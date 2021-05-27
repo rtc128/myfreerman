@@ -161,10 +161,8 @@ function backup_full()
 	mv "${TMP_DIRECTORY}" "${BASE_BACKUP_DIR}" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	LAST_BACKUP=`ls | tail -n 1` || return 1
-	write_out "Saving config file"
 	cp "$CONFIG_FILE" "$DIRECTORY/my.cnf" || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
-	backup_binlog || return 1
 }
 
 function binlog_backup_exists()
