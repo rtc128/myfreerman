@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.0
+RELEASE=1.5.1
 
 function apply_binlog()
 {
@@ -10,9 +10,23 @@ function apply_binlog()
 
 function backup()
 {
+	local OPTIND l_opt
+	while getopts "h" opt; do
+		case $opt in
+			h)
+				help_backup
+				return
+				;;
+			\?)
+				echo "Invalid option: -$OPTARG" >&2
+				usage
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
 	if [ $# -lt 1 ]; then
-		echo "Missing backup type" >&2
-		usage
+		help_backup
 		return 1
 	fi
 	check_config_backup || return 1
@@ -44,7 +58,7 @@ function backup()
 			;;
 		*)
 			echo "Invalid backup type '$BKP_TYPE'" >&2
-			usage
+			help_backup
 			return 1
 			;;
 	esac
@@ -53,18 +67,21 @@ function backup()
 function backup_binlog()
 {
 	local OPTIND l_opt
-	while getopts "" opt; do
+	while getopts "h" opt; do
 		case $opt in
+			h)
+				help_backup_binlog
+				return
+				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
-				usage
+				help_backup_binlog
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 0 ]; then
-		usage
+		help_backup_binlog
 		return 1
 	fi
 	check_config_backup_binlog || return 1
@@ -111,21 +128,35 @@ function backup_binlog()
 function backup_full()
 {
 	local OPTIND l_opt
-	while getopts "" opt; do
+	while getopts "d:h" opt; do
 		case $opt in
+			d)
+				BACKUP_DIR="$OPTARG"
+				;;
+			h)
+				help_backup_full
+				return
+				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
-				usage
+				help_backup_full
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if  [ $# -ne 0 ]; then
-		usage
+		help_backup_full
+		return 1
+	fi
+	if ! [ -d "$BACKUP_DIR" ]; then
+		write_out "Cannot find directory '$BACKUP_DIR'"
 		return 1
 	fi
 	cd "$BACKUP_DIR" || return 1
+
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
+
 	mkdir -p "$TMP_BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	DATE_VAL=`date +%Y-%m-%d`
@@ -165,8 +196,42 @@ function backup_full()
 	fix_backup_timestamp $LAST_BACKUP || return 1
 }
 
+function help_backup()
+{
+	echo "* Make backups"
+	echo "	backup binlog | full [ ... ]"
+	echo "  		binlog: backup binary logs"
+	echo "	  	full: backup full database"
+}
+
+function help_backup_binlog()
+{
+	echo "* Make binary log backups"
+	echo "	backup binlog"
+}
+
+function help_backup_full()
+{
+	echo "* Make full database backups"
+	echo "	backup full [ -d <dir> ]"
+	echo "		-d Save backup in <dir>, instead of directory set in configuration"
+}
+
+function help_restore()
+{
+	echo "* Restore database"
+	echo "	restore [ -o <dir> ] [ -p <timestamp> ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1[:<new table name>]> [ -t <schema2.table2[:<new table name>] [ ... ] ] ] ]"
+	echo "		-o use backup saved in <dir>, and not directory set in configuration"
+	echo "		-p restore until <timestmap>"
+	echo "			<timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
+	echo "				hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+}
+
 function binlog_backup_exists()
 {
+	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
+		return 1
+	fi
 	cd "$BINLOG_BACKUP_DIR" || return 1
 	LOGSEQ=$1
 	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
@@ -985,11 +1050,6 @@ function drop_db()
 	while getopts "" l_opt; do
 		case $l_opt in
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
-				return 1
-				;;
-			: )
-				echo "Invalid option: $OPTARG requires an argument" 1>&2
 				return 1
 				;;
 		esac
@@ -1247,7 +1307,6 @@ function init_slave()
 	while getopts "" l_opt; do
 		case $l_opt in
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
 				init_slave_usage
 				return 1
 				;;
@@ -1317,7 +1376,6 @@ function list()
 				LIST_REMOTE_HOST=${OPTARG}
 				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
 				return 1
 				;;
 		esac
@@ -1814,10 +1872,11 @@ function remove_expired_full_backups()
 	done
 }
 
-function remove_usage()
+function help_remove()
 {
-	echo "Help:" >&2
+	echo "* Remove backups"
 	echo "	remove expired"
+	echo "		expired: Remove expired backups, according to retention policy set in configuration"
 }
 
 function reset_master()
@@ -1839,6 +1898,10 @@ function restore()
 			d)
 				RESTORE_DB_OLD_NAME=${OPTARG}
 				;;
+			h)
+				help_restore
+				return
+				;;
 			o)
 				BACKUP_DIR="${OPTARG}"
 				;;
@@ -1859,12 +1922,7 @@ function restore()
 				RESTORE_DB_NEW_NAME=${OPTARG}
 				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
-				return 1
-				;;
-			: )
-				echo "Invalid option: $OPTARG requires an argument" 1>&2
-				return 1
+				help_restore
 				;;
 		esac
 	done
@@ -2067,12 +2125,6 @@ function restore_aux_instance()
 	fi
 }
 
-function restore_help()
-{
-	echo "Help:" >&2
-	echo "	restore [ -n ] [ -o <directory> ] [ -p yyyy-mm-dd_hh24:mi:ss ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>> [ ... ] ] ] ]" >&2
-}
-
 function restore_target_instance()
 {
 	DIR="${1}"
@@ -2237,7 +2289,7 @@ function run()
 				ANSWER_YES=1
 				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
+				return 1
 				;;
 		esac
 	done
@@ -2260,8 +2312,6 @@ function run()
 	fi
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	MYHOST=`hostname`
-	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
-	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 	RESTORE_BACKUP_DIR="$BACKUP_DIR/restore"
 	CMD=`echo $1 | awk '{print tolower($0)}'`
@@ -2278,30 +2328,24 @@ function run()
 			;;
 		backup)
 			backup $* || return 1
-			write_out "Finished"
 			;;
 		remove)
 			remove $* || return 1
-			write_out "Finished"
 			;;
 		drop-db)
 			drop_db $* || return 1
-			write_out "Finished"
 			;;
 		init-db)
 			init_db $* || return 1
-			write_out "Finished"
 			;;
 		init-slave)
 			init_slave $* || return 1
-			write_out "Finished"
 			;;
 		list)
 			list $* || return 1
 			;;
 		restore)
 			restore $* || return 1
-			write_out "Finished"
 			;;
 		*)
 			if [ -n "$CMD" ]; then
@@ -2316,18 +2360,21 @@ function run()
 function remove()
 {
 	local OPTIND l_opt
-	while getopts "" opt; do
+	while getopts "h" opt; do
 		case $opt in
+			h)
+				help_remove
+				return
+				;;
 			\?)
-				echo "Invalid option: -$OPTARG" >&2
-				remove_usage
+				help_remove
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 1 ]; then
-		remove_usage
+		help_remove
 		return 1
 	fi
 	case $1 in
@@ -2335,7 +2382,7 @@ function remove()
 			remove_expired_backups || return 1
 			;;
 		*)
-			remove_usage
+			help_remove
 			return 1
 			;;
 	esac
@@ -2350,7 +2397,7 @@ function uncompress_backup()
 
 function usage()
 {
-	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ <arguments> ]"
+	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ ... ]"
 	echo "- options:"
 	echo "   -c   use a specific config file"
 	echo "   -l   specify format for log file name"
@@ -2362,7 +2409,6 @@ function usage()
 	echo "	init-db"
 	echo "	init-slave"
 	echo "	drop-db"
-	echo "	recover"
 	echo "	remove"
 }
 
