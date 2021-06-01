@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.5.1
+Release:        1.5.2
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -34,6 +34,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Tue Jun 1 2021 Rodrigo Tassinari 1.5.2
+- Fixed bugs in LIST
 
 * Fri May 28 2021 Rodrigo Tassinari 1.5.1
 - Option to backup full database in another directory

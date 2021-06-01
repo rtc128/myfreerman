@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.1
+RELEASE=1.5.2
 
 function apply_binlog()
 {
@@ -1407,14 +1407,14 @@ function list()
 
 function list_binlog()
 {
-	cd "$BINLOG_BACKUP_DIR" || return 1
 	echo -e SEQUENCE '\t' DATE '\t\t' TIME
 	echo "-----------------------------------------"
-	LIST=`ls`
+	LIST=`ls "$BINLOG_BACKUP_DIR"`
 	for F in $LIST; do
+		FULL="${BINLOG_BACKUP_DIR}/${F}"
 		BINLOG=`echo $F | cut -d . -f 2`
 		LOGSEQ=`expr $BINLOG + 0`
-		BKP_FMT_TS="`stat -c %y "$F" | cut -d . -f 1`"
+		BKP_FMT_TS="`stat -c %y "$FULL" | cut -d . -f 1`"
 		DATE=${BKP_FMT_TS:0:10}
 		TIME=${BKP_FMT_TS:11:8}
 		echo -e $LOGSEQ '\t\t' $DATE '\t' $TIME
@@ -1428,10 +1428,10 @@ function list_binlog_remote()
 
 function list_full()
 {
-	cd "$BASE_BACKUP_DIR" || return 1
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	echo -e DATE '\t\t' TIME
 	echo "-------------------------"
-	LIST=`ls`
+	LIST=`ls "$BASE_BACKUP_DIR"`
 	for BKP in $LIST; do
 		DATE=${BKP:0:10}
 		TIME=${BKP:11:8}
