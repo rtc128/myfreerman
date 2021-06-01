@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.2
+RELEASE=1.5.3
 
 function apply_binlog()
 {
@@ -1845,16 +1845,15 @@ function remove_expired_binlog_backups()
 
 function remove_expired_full_backups()
 {
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	REF_TIMESTAMP=`date --date="-$RETENTION_PERIOD days" +%Y%m%d%H%M%S`
-	cd "$BACKUP_DIR" || return 1
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
-	cd "$BASE_BACKUP_DIR" || return 1
-	COUNT=`ls |wc -l`
+	COUNT=`ls "$BASE_BACKUP_DIR" | wc -l`
 	if [ $COUNT -eq 0 ]; then
 		return 0
 	fi
 	PREV_BKP=
-	for BKP in *; do
+	for BKP in `ls "$BASE_BACKUP_DIR"`; do
 		DATE=${BKP:0:10}
 		TIME=${BKP:11:8}
 		TIME=${TIME//-/:}
@@ -1865,7 +1864,7 @@ function remove_expired_full_backups()
 		fi
 		if [ -n "$PREV_BKP" ]; then
 			write_out "Removing expired full backup $PREV_BKP"
-			rm -fr $PREV_BKP || return 1
+			rm -fr "$BASE_BACKUP_DIR/$PREV_BKP" || return 1
 			PREV_BKP=`echo $PREV_BKP | cut -d . -f 1`
 		fi
 		PREV_BKP=$BKP
