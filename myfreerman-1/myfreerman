@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.3
+RELEASE=1.5.4
 
 function apply_binlog()
 {
@@ -19,7 +19,7 @@ function backup()
 				;;
 			\?)
 				echo "Invalid option: -$OPTARG" >&2
-				usage
+				main_help
 				return 1
 				;;
 		esac
@@ -217,6 +217,20 @@ function help_backup_full()
 	echo "		-d Save backup in <dir>, instead of directory set in configuration"
 }
 
+function help_init()
+{
+	echo "* Initialize a database"
+	echo "   init database | slave ..."
+	echo "      database: a new empty database"
+	echo "      slave: a slave for a replication environment"
+}
+
+function help_init_database
+{
+	echo "* Initialize a new empty database"
+	echo "   init database"
+}
+
 function help_restore()
 {
 	echo "* Restore database"
@@ -225,6 +239,15 @@ function help_restore()
 	echo "		-p restore until <timestmap>"
 	echo "			<timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
 	echo "				hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+}
+
+function help_init_slave
+{
+	echo "* Initialize a new slave"
+	echo "   init slave <host>[:<port>] <username> <dir>"
+	echo "      host: master hostname (optional port)"
+	echo "      username: replication username created in master"
+	echo "      dir: master backup directory"
 }
 
 function binlog_backup_exists()
@@ -658,7 +681,7 @@ function copy_restored_tables()
 function create_aux_config()
 {
 	DIR=$1
-	MYSQL_VER=`get_mysql_usage $DIR` || return 1
+	MYSQL_VER=`get_mysql_main_help $DIR` || return 1
 	if [ -z "$AUX_BASEDIR" ]; then
 		echo "Cannot find 'basedir' in '$CONFIG_FILE'" >&2
 		return 1
@@ -923,10 +946,10 @@ function get_binlog_transaction_timestamp()
 	date -d"$TIMESTAMP" +%Y-%m-%d_%H-%M-%S
 }
 
-function get_mysql_usage()
+function get_mysql_main_help()
 {
 	BACKUP=$1
-	grep -w "mysql_usage" $BASE_BACKUP_DIR/$BACKUP/meta/backup_variables.txt | cut -d '=' -f 2 | cut -d '.' -f 1 || return 1
+	grep -w "mysql_main_help" $BASE_BACKUP_DIR/$BACKUP/meta/backup_variables.txt | cut -d '=' -f 2 | cut -d '.' -f 1 || return 1
 }
 
 function get_oldest_full_backup()
@@ -970,56 +993,6 @@ function get_current_slave_binlog()
 	LONG_LOGSEQ=`seq -f "%06g" $MIN_LOG $MIN_LOG`
 	echo ${BINLOG_BNAME}.${LONG_LOGSEQ}
 	return 0
-}
-
-function get_master_config()
-{
-	#read slave config
-	read -e -p "Master hostname: " MASTER_HOST
-	while [ -z "$MASTER_HOST" ]; do
-		read -e -p "Master hostname: " MASTER_HOST
-	done
-
-	read -e -p "Master port: [3306] "
-	if [ -z "$MASTER_PORT" ]; then
-		MASTER_PORT=3306
-	fi
-
-	read -e -p "Replication username: " REPL_USERNAME
-	while [ -z "$REPL_USERNAME" ]; do
-		read -e -p "Replication username: " REPL_USERNAME
-	done
-
-	read -s -p "Replication user password: " REPL_PASSWD
-	while [ -z "$REPL_PASSWD" ]; do
-		read -s -p "Replication user password: " REPL_PASSWD
-	done
-
-	while ! mysqladmin -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USERNAME -p"${REPL_PASSWD}" status >/dev/null; do
-		read -e -p "Master hostname: [$MASTER_HOST]" NEW_MASTER_HOST
-		if [ -z "$NEW_MASTER_HOST" ]; then
-			NEW_MASTER_HOST=$MASTER_HOST
-		fi
-		MASTER_HOST=$NEW_MASTER_HOST
-
-		read -e -p "Master port: [$MASTER_PORT] " NEW_MASTER_PORT
-		if [ -z "$NEW_MASTER_PORT" ]; then
-			NEW_MASTER_PORT=$MASTER_PORT
-		fi
-		MASTER_PORT=$NEW_MASTER_PORT
-
-		read -e -p "Replication username: [$REPL_USERNAME] " NEW_REPL_USERNAME
-		if [ -z "$NEW_REPL_USERNAME" ]; then
-			NEW_REPL_USERNAME=$REPL_USERNAME
-		fi
-		REPL_USERNAME=$NEW_REPL_USERNAME
-
-		read -s -p "Replication user password: [********] " NEW_REPL_PASSWD
-		if [ -z "$NEW_REPL_PASSWD" ]; then
-			NEW_REPL_PASSWD=$REPL_PASSWD
-		fi
-		REPL_PASSWD=$NEW_REPL_PASSWD
-	done
 }
 
 function header()
@@ -1122,8 +1095,65 @@ function drop_db()
 	fi
 }
 
-function init_db()
+function init()
 {
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_init
+				return
+				;;
+			\?)
+				help_init
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -eq 0 ]; then
+		help_init
+		return 1
+	fi
+
+	CMD=$1
+	shift
+	case $CMD in
+		database)
+			init_database $* || return 1
+			;;
+		slave)
+			init_slave $* || return 1
+			;;
+		*)
+			help_init
+			return 1
+			;;
+	esac
+}
+
+function init_database()
+{
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_init_database
+				return
+				;;
+			\?)
+				help_init_database
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+
+	if [ $# -ne 0 ]; then
+		help_init_database
+		return 1
+	fi
+
 	#error log is required
 	LOG_ERROR="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	if [ -z "$LOG_ERROR" ]; then
@@ -1274,7 +1304,7 @@ function init_db()
 		fi
 	fi
 
-	echo -n "Please enter new password for root: "
+	echo -n "Please enter initial password for root: "
 	read NEW_PASSWORD
 
 	#run initialize
@@ -1304,10 +1334,14 @@ function init_db()
 function init_slave()
 {
 	local OPTIND l_opt
-	while getopts "" l_opt; do
+	while getopts "h" l_opt; do
 		case $l_opt in
+			h)
+				help_init_slave
+				return
+				;;
 			\?)
-				init_slave_usage
+				help_init_slave
 				return 1
 				;;
 		esac
@@ -1315,7 +1349,7 @@ function init_slave()
 	shift $((OPTIND-1))
 
 	if [ $# -ne 3 ]; then
-		init_slave_usage
+		help_init_slave
 		return 1
 	fi
 
@@ -1323,6 +1357,8 @@ function init_slave()
 	MASTER_PORT=`echo $MASTER_HOST | cut -s -d \: -f 2`
 	if [ -z "$MASTER_PORT" ]; then
 		MASTER_PORT=3306
+	else
+		MASTER_HOST=`echo $MASTER_HOST | cut -s -d \: -f 1`
 	fi
 	REPL_USERNAME=$2
 	BACKUP_DIRECTORY="$3"
@@ -1360,12 +1396,6 @@ function init_slave()
 	mysql_stop "$CONFIG_FILE" slave || return 1
 }
 
-function init_slave_usage()
-{
-	echo "Help:"
-	echo "	init-slave <master hostname>[:<port>] <replication username> <backup directory>"
-}
-
 function list()
 {
 	LIST_REMOTE_HOST=
@@ -1382,7 +1412,7 @@ function list()
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 1 ]; then
-		usage
+		main_help
 		return 1
 	fi
 	CMD=$1
@@ -1399,7 +1429,7 @@ function list()
 			list_binlog || return 1
 			;;
 		*)
-			usage
+			main_help
 			return 1
 			;;
 	esac
@@ -1459,7 +1489,7 @@ function list_remote()
 			list_binlog_remote || return 1
 			;;
 		*)
-			usage
+			main_help
 			return 1
 			;;
 	esac
@@ -1608,7 +1638,7 @@ function query()
 			query_backup_age || return 1
 			;;
 		*)
-			usage
+			main_help
 			;;
 	esac
 }
@@ -2301,7 +2331,7 @@ function run()
 		header
 	fi
 	if [ $# -lt 1 ]; then
-		usage
+		main_help
 		return 1
 	fi
 	read_config || return 1
@@ -2334,11 +2364,8 @@ function run()
 		drop-db)
 			drop_db $* || return 1
 			;;
-		init-db)
-			init_db $* || return 1
-			;;
-		init-slave)
-			init_slave $* || return 1
+		init)
+			init $* || return 1
 			;;
 		list)
 			list $* || return 1
@@ -2350,7 +2377,7 @@ function run()
 			if [ -n "$CMD" ]; then
 				echo "Invalid command: $CMD" >&2
 			fi
-			usage
+			main_help
 			return 1
 			;;
 	esac
@@ -2394,21 +2421,21 @@ function uncompress_backup()
 	tar -C "${BASE_BACKUP_DIR}" -x -z -f "${TAR_FILE}" || return 1
 }
 
-function usage()
+function main_help()
 {
-	echo "Usage:  myfreerman [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ ... ]"
-	echo "- options:"
-	echo "   -c   use a specific config file"
-	echo "   -l   specify format for log file name"
-	echo "   -q   quiet mode - do not print release information"
-	echo "   -y   assume YES for all questions"
-	echo "- commands:"
-	echo "	backup"
-	echo "	list"
-	echo "	init-db"
-	echo "	init-slave"
-	echo "	drop-db"
-	echo "	remove"
+	echo "$0 [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
+	echo "options:"
+	echo "   c: use a specific config file"
+	echo "   l: specify format for log file name"
+	echo "   q: quiet mode - do not print release information"
+	echo "   y: assume YES for all questions"
+	echo "   h: print help for command"
+	echo "commands:"
+   echo "   backup"
+   echo "   list"
+   echo "   init"
+   echo "   drop-db"
+   echo "   remove"
 }
 
 function wait_server_start()
