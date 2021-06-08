@@ -10,19 +10,35 @@ myfreerman \- administer mysql backups
 
 myfreerman [ -c <config> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ ... ]
 
+myfreerman -h
+
+myfreerman <command> ... -h
+
 .B commands
 
-backup full | binlog
+backup
+
+	full
+
+	binlog
 
 drop-db
 
-init-db
+init
 
-init-slave <host>[:<port>] <user> <dir>
+	database
 
-list [ -r <remote server> ] full | binlog
+	slave
+
+list
+
+	full
+
+	binlog
 
 remove
+
+	expired
 
 restore
 
@@ -46,6 +62,8 @@ It adds support for:
 
 - Creating a new slave server
 
+- Drop a database
+
 .SH CONFIGURATION
 
 The default configuration section is \fBmysqld\fR for the server and \fBmyfreerman\fR for myfreerman. You can define environment variable \fBMYSQL_SID\fR to change the section.
@@ -61,79 +79,37 @@ Exemple: MYSQL_SID=dev => sections are mysqld@dev and myfreerman@dev.
 
 -y Assume YES to all questions.
 
+-h Print help (any command has this option)
+
 .B backup
 
-Backup the database. The new backup can be \fBfull\fR or \fBbinlog\fR backup.
-	
-	backup full [ -d <dir> ]
-		
-		Make a full database backup
-
-			-d Save backup in <dir>, instead of directory set in configuration
-
-	backup binlog
-
-		Backup binary logs
+Backup the database. Used for full backups and for binary log backups.
 
 
 .B drop-db
 
 Drop current database (data files, binlogs, relay logs, redo and undo).
 
-.B init-db
 
-Create a new server repository - according to MySQL configuration parameters.
+.B init
 
-.B init-slave
+Initialize new database, which can be a new master or a slave.
 
-init-slave <host>[:<port>] <user> <dir>
-
-Initialize a new slave server, using a backup from master server.
-
-	host: master hostname (optional port number, if not default port)
-
-	user: replication username created in master
-
-	dir: master backup directory
 
 .B list
 
-List current backups. List \fBfull\fR or \fBbinlog\fR backups.
+List current backups.
 
-	-r List backups from remote mysql server.
 
 .B remove
 
 Remove backups.
 
-	remove expired
-	
-		expired: Remove expired backups, according to retention_period (configuration 'retention_period').
 
 .B restore
 
 Restore a previously created backup.
-By default, after restoring a backup with PITR, a new backup incarnation is created. Directories $BACKUP_DIR/base and $BACKUP_DIR/binlog are moved to $BACKUP_DIR/restore/$CURRENT_TIMESTAMP.
-If you anytime wish to access this backupset again, you need to manually move contents from $BACKUP_DIR/restore/$CURRENT_TIMESTAMP to $BACKUP_DIR. See -n option.
-Server config file must exist.
 
-restore [ -n ] [ -o <directory> ] [ -p <timestamp> ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1[:<new table name>]> [ -t <schema2.table2>[:<new table name>] [ ... ] ] ] ]
-
-   -o Use specified directory as backup origin, and not the one in configuration file.
-
-   -n Do not create a new backup incarnation. This is used for PITR accross different environments, such as restoring production backups in test servers.
-
-   -p Restore using a specific point in time - PITR.
-		<timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss
-			hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second
-
-   -d Restore only a specific schema. Cannot be used with -t.
-
-   -x Restore only a specific schema, but with a new name. Requires -d.
-
-   -t Restore only specific table(s). Cannot be used with -d.
-
-   -s Slave mode: do not apply binlogs after restoration. Needed when mounting a slave server.
 
 .SH SEE ALSO
 

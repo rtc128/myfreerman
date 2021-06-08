@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.4
+RELEASE=1.5.6
 
 function apply_binlog()
 {
@@ -234,11 +234,15 @@ function help_init_database
 function help_restore()
 {
 	echo "* Restore database"
-	echo "	restore [ -o <dir> ] [ -p <timestamp> ] [ -d <schema> [ -x <schema> ] | [ -t <schema1.table1[:<new table name>]> [ -t <schema2.table2[:<new table name>] [ ... ] ] ] ]"
+	echo "	restore [ -n ] [ -o <dir> ] [ -p <timestamp> ] [ -s <schema>[:<new name>] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>] [ ... ] ] ] ]"
+	echo "      -n do not create a new database incarnation"
 	echo "		-o use backup saved in <dir>, and not directory set in configuration"
 	echo "		-p restore until <timestmap>"
 	echo "			<timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
 	echo "				hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+	echo "      -s Restore only specific schema (optionally using a new name)"
+	echo "      -t Restore only specific table (optionally using a new name)"
+	echo "         Multiple -t options are allowed"
 }
 
 function help_init_slave
@@ -248,6 +252,18 @@ function help_init_slave
 	echo "      host: master hostname (optional port)"
 	echo "      username: replication username created in master"
 	echo "      dir: master backup directory"
+}
+
+function help_list
+{
+	echo "* List backups"
+	echo "   list [ -r <hostname> ] full"
+	echo "      List full backups"
+	echo "   list [ -r <hostname> ] binlog"
+	echo "      List binlog backups"
+	echo
+	echo "   OPTIONS:"
+	echo "      -r List backups that are saved in remote host <hostname>"
 }
 
 function binlog_backup_exists()
@@ -464,16 +480,6 @@ function check_lock_file()
 	fi
 }
 
-function check_new_db_name()
-{
-	if [ -n "$RESTORE_DB_NEW_NAME" ]; then
-		if ls $DATADIR/$RESTORE_DB_NEW_NAME >/dev/null 2>&1; then
-			echo "Database '$RESTORE_DB_NEW_NAME' already exists" >&2
-			return 1
-		fi
-	fi
-}
-
 function check_purge_binlogs()
 {
 	#if this instance is a slave, purge binary logs,
@@ -638,14 +644,9 @@ function consistent_backup()
 
 function copy_recovered_db()
 {
-	if [ -z "$RESTORE_DB_NEW_NAME" ]; then
-		RESTORE_DB_NEW_NAME=$RESTORE_DB_OLD_NAME
-		write_out "Dropping target schema '$RESTORE_DB_NEW_NAME'"
-		mysql $TARGET_CRED_OPT -e "drop database if exists $RESTORE_DB_NEW_NAME;" || return 1
-	fi
 	write_out "Copying recovered database from aux instance"
-	mysql $TARGET_CRED_OPT -e "create database $RESTORE_DB_NEW_NAME;" >/dev/null || return 1
-	mysqldump --socket=$AUX_SOCKET --no-create-db --routines --events --triggers --set-gtid-purged=off $RESTORE_DB_OLD_NAME | mysql $TARGET_CRED_OPT $RESTORE_DB_NEW_NAME || return 1
+	mysql $TARGET_CRED_OPT -e "create database if not exists $RESTORE_SCHEMA_NEW_NAME;" >/dev/null || return 1
+	mysqldump --socket=$AUX_SOCKET --no-create-db --routines --events --triggers --set-gtid-purged=off $RESTORE_SCHEMA_OLD_NAME | mysql $TARGET_CRED_OPT $RESTORE_SCHEMA_NEW_NAME || return 1
 }
 
 function copy_restored_tables()
@@ -672,9 +673,6 @@ function copy_restored_tables()
 						-e s/^\\\(lock\ tables\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
 						-e s/^\\\(.*alter\ table\ \\\)\`$ORIG_TABLE\`/\\1\`$NEW_TABLE\`/i \
 						| mysql $TARGET_CRED_OPT $SCHEMA || return 1
-
-		mysqldump --defaults-file=$AUX_CONFIG --skip-lock-tables --no-create-db --routines --events --triggers --set-gtid-purged=off --result-file /tmp/mysqldump.log $SCHEMA $ORIG_TABLE
-		echo /tmp/mysqldump.log
 	done
 }
 
@@ -712,6 +710,14 @@ function create_aux_config()
 	echo "mysqlx=0" >>$AUX_CONFIG
 	echo "pid_file=$AUX_PID_FILE" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
+	#relay log (mask)
+	if -n [ "$AUX_RELAY_LOG_MASK" ]; then
+		echo "relay_log=$AUX_RELAY_LOG_MASK" >>$AUX_CONFIG
+	fi
+	#relay log (index)
+	if -n [ "$AUX_RELAY_LOG_INDEX" ]; then
+		echo "relay_log_index=$AUX_RELAY_LOG_INDEX" >>$AUX_CONFIG
+	fi
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
 	echo "skip-grant-tables=1" >>$AUX_CONFIG
 	echo "user=mysql" >>$AUX_CONFIG
@@ -983,6 +989,7 @@ function get_current_slave_binlog()
 			if [ -z "$CUR_LOG" ]; then
 				return 1
 			fi
+			CUR_LOG=`expr $CUR_LOG + 0`
 			if [ $CUR_LOG -lt $MIN_LOG ]; then
 				MIN_LOG=$CUR_LOG
 			fi
@@ -990,6 +997,10 @@ function get_current_slave_binlog()
 			return 1
 		fi
 	done
+
+	#decrement one, because sometimes it looses sync and master purges an unapplied binlog
+	MIN_LOG=$((MIN_LOG-1))
+
 	LONG_LOGSEQ=`seq -f "%06g" $MIN_LOG $MIN_LOG`
 	echo ${BINLOG_BNAME}.${LONG_LOGSEQ}
 	return 0
@@ -1372,7 +1383,8 @@ function init_slave()
 		return 1
 	fi
 	ANSWER_YES=1
-	restore -s -o "$BACKUP_DIRECTORY" || exit 1
+	SLAVE=1
+	restore -n -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
 	mysql_start "$CONFIG_FILE" slave || return 1
@@ -1400,19 +1412,24 @@ function list()
 {
 	LIST_REMOTE_HOST=
 	local OPTIND l_opt
-	while getopts "r:" l_opt; do
+	while getopts "hr:" l_opt; do
 		case $l_opt in
+			h)
+				help_list
+				return
+				;;
 			r)
 				LIST_REMOTE_HOST=${OPTARG}
 				;;
 			\?)
+				help_list
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
-	if [ $# -ne 1 ]; then
-		main_help
+	if [ $# -lt 1 ]; then
+		help_list
 		return 1
 	fi
 	CMD=$1
@@ -1429,7 +1446,7 @@ function list()
 			list_binlog || return 1
 			;;
 		*)
-			main_help
+			help_list
 			return 1
 			;;
 	esac
@@ -1437,6 +1454,8 @@ function list()
 
 function list_binlog()
 {
+	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
+	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
 	echo -e SEQUENCE '\t' DATE '\t\t' TIME
 	echo "-----------------------------------------"
 	LIST=`ls "$BINLOG_BACKUP_DIR"`
@@ -1459,6 +1478,7 @@ function list_binlog_remote()
 function list_full()
 {
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	echo -e DATE '\t\t' TIME
 	echo "-------------------------"
 	LIST=`ls "$BASE_BACKUP_DIR"`
@@ -1798,27 +1818,17 @@ function recover()
 		fi
 		return 1
 	fi
-	write_out "Applying binary log sequence $LOGSEQ"
-	if ! read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL $RECOVER_DB; then
-		mysql_stop "$CONFIG" $ITYPE
-		return 1
-	fi
-	if ! apply_binlog $TMP_SQL "$SOCKET"; then
-		mysql_stop "$CONFIG" $ITYPE
-		return 1
-	fi
-
-	LOGSEQ=`expr $LOGSEQ + 1`
 	while binlog_backup_exists $LOGSEQ; do
 		rm $TMP_SQL || return 1
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log sequence $LOGSEQ"
-		read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
+		read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
 		if ! apply_binlog $TMP_SQL "$SOCKET"; then
 			mysql_stop "$CONFIG" $ITYPE
 			return 1
 		fi
 		LOGSEQ=`expr $LOGSEQ + 1`
+		POSITION=0
 	done
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		while binlog_exists $LOGSEQ; do
@@ -1915,17 +1925,16 @@ function reset_master()
 
 function restore()
 {
-	DB_COPY=0
+	DORESET=1
 	PITR=0
 	RESTORE_TABLE_LIST=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
-	SLAVE=0
 	CUR_SOCKET="$DB_SOCKET"
 	local OPTIND l_opt
-	while getopts "d:no:p:st:x:" l_opt; do
+	while getopts "hno:s:p:t:" l_opt; do
 		case $l_opt in
-			d)
-				RESTORE_DB_OLD_NAME=${OPTARG}
+			s)
+				RESTORE_SCHEMA=${OPTARG}
 				;;
 			h)
 				help_restore
@@ -1933,22 +1942,17 @@ function restore()
 				;;
 			o)
 				BACKUP_DIR="${OPTARG}"
+				DORESET=0
 				;;
 			n)
-				DB_COPY=1
+				DORESET=0
 				;;
 			p)
 				PITR=1
 				USER_TIMESTAMP="${OPTARG}"
 				;;
-			s)
-				SLAVE=1
-				;;
 			t)
 				RESTORE_TABLE_LIST="$RESTORE_TABLE_LIST ${OPTARG}"
-				;;
-			x)
-				RESTORE_DB_NEW_NAME=${OPTARG}
 				;;
 			\?)
 				help_restore
@@ -1957,7 +1961,7 @@ function restore()
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 0 ]; then
-		restore_help
+		help_restore
 		return 1
 	fi
 	restore_validate_options || return 1
@@ -1989,12 +1993,7 @@ function restore()
 	fi
 	#check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
-	if [ -n "$RESTORE_DB_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
-		#only when database is running locally
-		if [ -z "$DB_SOCKET" ]; then
-			write_out "For schema/table restoration, database must be running locally"
-			return 1
-		fi
+	if [ -n "$RESTORE_SCHEMA" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 		#target instance must be running
 		if ! mysqladmin $TARGET_CRED_OPT status >/dev/null 2>&1; then
@@ -2029,12 +2028,18 @@ function restore()
 	#mysqld user
 	MYSQLD_USER="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION user 2>/dev/null`"
 
-	if [ "$RESTORE_DB_OLD_NAME" = "mysql" -o "$RESTORE_DB_OLD_NAME" = "sys" -o "$RESTORE_DB_OLD_NAME" = "information_schema" ]; then
-		echo "Invalid database name '$RESTORE_DB_OLD_NAME'" >&2
+	RESTORE_SCHEMA_OLD_NAME=`echo $RESTORE_SCHEMA | cut -d \: -f 1`
+	RESTORE_SCHEMA_NEW_NAME=`echo $RESTORE_SCHEMA | cut -d \: -f 2`
+	if [ -z "$RESTORE_SCHEMA_NEW_NAME" ]; then
+		RESTORE_SCHEMA_NEW_NAME=$RESTORE_SCHEMA_OLD_NAME
+	fi
+
+	if [ "$RESTORE_SCHEMA_OLD_NAME" = "mysql" -o "$RESTORE_SCHEMA_OLD_NAME" = "sys" -o "$RESTORE_SCHEMA_OLD_NAME" = "information_schema" -o "$RESTORE_SCHEMA_OLD_NAME" = "performance_schema" ]; then
+		write_out "Invalid schema name '$RESTORE_SCHEMA_OLD_NAME'"
 		return 1
 	fi
-	if [ "$RESTORE_DB_NEW_NAME" = "mysql" -o "$RESTORE_DB_NEW_NAME" = "sys" -o "$RESTORE_DB_NEW_NAME" = "information_schema" ]; then
-		echo "Invalid database name '$RESTORE_DB_NEW_NAME'" >&2
+	if [ "$RESTORE_SCHEMA_NEW_NAME" = "mysql" -o "$RESTORE_SCHEMA_NEW_NAME" = "sys" -o "$RESTORE_SCHEMA_NEW_NAME" = "information_schema" -o "$RESTORE_SCHEMA_NEW_NAME" = "performance_schema" ]; then
+		write_out "Invalid schema name '$RESTORE_SCHEMA_NEW_NAME'"
 		return 1
 	fi
 	CONFIG="$CONFIG_FILE"
@@ -2053,7 +2058,7 @@ function restore()
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$AUX_BASEDIR" || return 1
 		fi
-		DB_COPY=1
+		DORESET=0
 		AUX_CONFIG=/tmp/${BASENAME}.cnf
 		CONFIG="$AUX_CONFIG"
 		AUX_BINLOG_PREFIX="${AUX_BASEDIR}/${BINLOG_PREFIX}"
@@ -2068,16 +2073,15 @@ function restore()
 		AUX_UNDODIR="${AUX_BASEDIR}/${UNDODIR}"
 		CUR_SOCKET="$AUX_SOCKET"
 
-		#ensure binlog backups are up to date, because requested timestamp might be after last saved binlog
-		backup_binlog || return 1
+		#relay
+		if [ -n "$RELAY_LOG_INDEX" ]; then
+			AUX_RELAY_LOG_INDEX="${AUX_BASEDIR}/${RELAY_LOG_INDEX}"
+		fi
+		if [ -n "$RELAY_LOG_MASK" ]; then
+			AUX_RELAY_LOG_MASK="${AUX_BASEDIR}/${RELAY_LOG_MASK}"
+		fi
 	fi
-	check_new_db_name || return 1
 	write_out "Starting restore"
-	MODE=off
-	if [ $SLAVE -eq 1 ]; then
-		MODE=on
-	fi
-	write_out "Slave mode: $MODE"
 	MYSQLD_USER="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION user`" 2>/dev/null
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
 		restore_target_instance $DIR || return 1
@@ -2092,15 +2096,14 @@ function restore()
 		ITYPE="aux"
 	fi
 	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" "$CUR_SOCKET" || return 1
-	if [ -n "$RESTORE_DB_OLD_NAME" ]; then
+	if [ -n "$RESTORE_SCHEMA_OLD_NAME" ]; then
 		copy_recovered_db || (mysql_stop "$CONFIG" $ITYPE && return 1)
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
 		copy_restored_tables || (mysql_stop "$CONFIG" $ITYPE && return 1)
 	fi
-	if [ $PITR -eq 1 -a $DB_COPY -eq 0 ]; then
+	if [ $USE_AUX_INSTANCE -eq 0 -a $DORESET -eq 1 ]; then
 		create_incarnation $MOMENT
-		write_out "Resetting binary logs"
 		reset_master || return 1
 	fi
 	mysql_stop "$CONFIG" $ITYPE
@@ -2268,12 +2271,16 @@ function restore_validate_options()
 		return 1
 	fi
 
-	if [ -n "$RESTORE_DB_NEW_NAME" -a -z "$RESTORE_DB_OLD_NAME" ]; then
-		echo "Option -x requires -d" >&2
-		return 1
+	#for restoration of a specific schema or a specific table, target instance must be local
+	if [ -n "$RESTORE_SCHEMA_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
+		if [ -z "$DB_SOCKET" ]; then
+			echo "Restoring specific schemas or tables are not allowed for remote instances" >&2
+			return 1
+		fi
 	fi
-	if [ -n "$RESTORE_DB_OLD_NAME" -a -n "$RESTORE_TABLE_LIST" ]; then
-		echo "Options -d and -t cannot be used together" >&2
+
+	if [ -n "$RESTORE_SCHEMA_OLD_NAME" -a -n "$RESTORE_TABLE_LIST" ]; then
+		echo "Options -s and -t cannot be used together" >&2
 		return 1
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
@@ -2339,6 +2346,7 @@ function run()
 	if [ -n "$LOG_FILE_BASENAME" ]; then
 		LOG_FILE="${LOG_DIR}/$LOG_FILE_BASENAME"
 	fi
+	SLAVE=0
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	MYHOST=`hostname`
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
