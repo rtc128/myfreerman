@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.6
+RELEASE=1.5.7
 
 function apply_binlog()
 {
@@ -711,11 +711,11 @@ function create_aux_config()
 	echo "pid_file=$AUX_PID_FILE" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	#relay log (mask)
-	if -n [ "$AUX_RELAY_LOG_MASK" ]; then
+	if [ -n "$AUX_RELAY_LOG_MASK" ]; then
 		echo "relay_log=$AUX_RELAY_LOG_MASK" >>$AUX_CONFIG
 	fi
 	#relay log (index)
-	if -n [ "$AUX_RELAY_LOG_INDEX" ]; then
+	if [ -n "$AUX_RELAY_LOG_INDEX" ]; then
 		echo "relay_log_index=$AUX_RELAY_LOG_INDEX" >>$AUX_CONFIG
 	fi
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
@@ -2061,24 +2061,24 @@ function restore()
 		DORESET=0
 		AUX_CONFIG=/tmp/${BASENAME}.cnf
 		CONFIG="$AUX_CONFIG"
-		AUX_BINLOG_PREFIX="${AUX_BASEDIR}/${BINLOG_PREFIX}"
-		AUX_BINLOG_INDEX="${AUX_BASEDIR}/${BINLOG_INDEX}"
-		AUX_DATADIR="$AUX_BASEDIR/${DATADIR}"
+		AUX_BINLOG_PREFIX="${AUX_BASEDIR}/binlog/binlog"
+		AUX_BINLOG_INDEX="${AUX_BASEDIR}/binlog.index"
+		AUX_DATADIR="$AUX_BASEDIR/datadir"
 		AUX_LOG_ERROR=`mktemp /tmp/mysql.XXXXXX.log`
 		AUX_PID_FILE="$AUX_BASEDIR/pid_file"
 		AUX_SOCKET="$AUX_BASEDIR/socket"
 		AUX_PORT=`find_aux_port` || return 1
-		AUX_REDODIR="${AUX_BASEDIR}/${REDODIR}"
+		AUX_REDODIR="${AUX_BASEDIR}/redo"
 		AUX_SOCKET_OPT="--socket=$AUX_SOCKET"
-		AUX_UNDODIR="${AUX_BASEDIR}/${UNDODIR}"
+		AUX_UNDODIR="${AUX_BASEDIR}/undo"
 		CUR_SOCKET="$AUX_SOCKET"
 
 		#relay
 		if [ -n "$RELAY_LOG_INDEX" ]; then
-			AUX_RELAY_LOG_INDEX="${AUX_BASEDIR}/${RELAY_LOG_INDEX}"
+			AUX_RELAY_LOG_INDEX="${AUX_BASEDIR}/relay.index"
 		fi
 		if [ -n "$RELAY_LOG_MASK" ]; then
-			AUX_RELAY_LOG_MASK="${AUX_BASEDIR}/${RELAY_LOG_MASK}"
+			AUX_RELAY_LOG_MASK="${AUX_BASEDIR}/relay/relay"
 		fi
 	fi
 	write_out "Starting restore"
