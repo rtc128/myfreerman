@@ -22,7 +22,9 @@ backup
 
 	binlog
 
-drop-db
+drop
+
+	database
 
 init
 
@@ -86,9 +88,9 @@ Exemple: MYSQL_SID=dev => sections are mysqld@dev and myfreerman@dev.
 Backup the database. Used for full backups and for binary log backups.
 
 
-.B drop-db
+.B drop
 
-Drop current database (data files, binlogs, relay logs, redo and undo).
+Drop data from local server.
 
 
 .B init

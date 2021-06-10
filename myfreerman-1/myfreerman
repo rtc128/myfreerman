@@ -1,11 +1,12 @@
 #!/bin/bash
-RELEASE=1.5.7
+RELEASE=1.5.8
 
 function apply_binlog()
 {
 	FILENAME="$1"
 	SOCKET="$2"
-	mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$FILENAME" || return 1
+	#mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$FILENAME" || return 1
+	mysql --socket="$SOCKET" <"$FILENAME" || return 1
 }
 
 function backup()
@@ -215,6 +216,18 @@ function help_backup_full()
 	echo "* Make full database backups"
 	echo "	backup full [ -d <dir> ]"
 	echo "		-d Save backup in <dir>, instead of directory set in configuration"
+}
+
+function help_drop()
+{
+	echo "* Drop data from local server"
+	echo "   drop database: drop current database - datafiles, redo, undo, binary logs and relay logs"
+}
+
+function help_drop_database()
+{
+	echo "* Drop current database - datafiles, redo, undo, binary logs and relay logs"
+	echo "Syntax: drop database"
 }
 
 function help_init()
@@ -446,8 +459,8 @@ function check_empty_target_database()
 	fi
 
 	#check there is no relay log
-	if [ -n "$RELAY_LOG_MASK" ] && ls "$RELAY_LOG_MASK"* >/dev/null 2>&1; then
-		write_out "No relay logs [${RELAY_LOG_MASK}*] might exist"
+	if [ -n "$RELAY_LOG_PREFIX" ] && ls "$RELAY_LOG_PREFIX"* >/dev/null 2>&1; then
+		write_out "No relay logs [${RELAY_LOG_PREFIX}*] might exist"
 		return 1
 	fi
 
@@ -703,6 +716,7 @@ function create_aux_config()
 	echo "lc_messages=en_US" >>$AUX_CONFIG
 	echo "log_bin=${AUX_BINLOG_PREFIX}" >>$AUX_CONFIG
 	echo "log_bin_index=${AUX_BINLOG_INDEX}" >>$AUX_CONFIG
+	echo "log_bin_trust_function_creators=on" >>$AUX_CONFIG
 	echo "log_error=$AUX_LOG_ERROR" >>$AUX_CONFIG
 	echo "log_timestamps=system" >>$AUX_CONFIG
 	echo "lower_case_table_names=$LOWER_CASE_TABLE_NAMES" >>$AUX_CONFIG
@@ -710,9 +724,9 @@ function create_aux_config()
 	echo "mysqlx=0" >>$AUX_CONFIG
 	echo "pid_file=$AUX_PID_FILE" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
-	#relay log (mask)
-	if [ -n "$AUX_RELAY_LOG_MASK" ]; then
-		echo "relay_log=$AUX_RELAY_LOG_MASK" >>$AUX_CONFIG
+	#relay log (prefix)
+	if [ -n "$AUX_RELAY_LOG_PREFIX" ]; then
+		echo "relay_log=$AUX_RELAY_LOG_PREFIX" >>$AUX_CONFIG
 	fi
 	#relay log (index)
 	if [ -n "$AUX_RELAY_LOG_INDEX" ]; then
@@ -736,6 +750,8 @@ function create_aux_config()
 	echo "max_allowed_packet=99M" >>$AUX_CONFIG
 	echo "port=$AUX_PORT" >>$AUX_CONFIG
 	echo "socket=$AUX_SOCKET" >>$AUX_CONFIG
+
+	cat $AUX_CONFIG
 }
 
 function create_incarnation()
@@ -758,8 +774,8 @@ function drop_target_database()
 	if [ -n "$BINLOG_PREFIX" ]; then
 		rm -f "$BINLOG_PREFIX"* || return 1
 	fi
-	if [ -n "$RELAY_LOG_MASK" ]; then
-		rm -f "$RELAY_LOG_MASK"* || return 1
+	if [ -n "$RELAY_LOG_PREFIX" ]; then
+		rm -f "$RELAY_LOG_PREFIX"* || return 1
 	fi
 	if [ -n "$BINLOG_INDEX" ]; then
 		rm -f "$BINLOG_INDEX" || return 1
@@ -1028,16 +1044,60 @@ function kill_pid()
 	done
 }
 
-function drop_db()
+function drop()
 {
 	local OPTIND l_opt
-	while getopts "" l_opt; do
+	while getopts "h" l_opt; do
 		case $l_opt in
+			h)
+				help_drop
+				return
+				;;
 			\?)
+				help_drop
 				return 1
 				;;
 		esac
 	done
+	shift $((OPTIND-1))
+	if [ $# -lt 1 ]; then
+		help_drop
+		return 1
+	fi
+	CMD=$1
+	shift
+	case $CMD in
+		database)
+			drop_database $* || return 1
+			;;
+		*)
+			echo "Invalid drop command: $CMD" >&2
+			help_drop
+			return 1
+			;;
+	esac
+}
+
+function drop_database()
+{
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_drop_database
+				return
+				;;
+			\?)
+				help_drop_database
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -gt 0 ]; then
+		help_drop_database
+		return 1
+	fi
 	PID_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
 	if [ -f "$PID_FILE" ]; then
 		PID=`cat "$PID_FILE"`
@@ -1588,9 +1648,9 @@ function mysql_start()
 	START_TIMEOUT=300
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off --skip-grant-tables"
 	write_out "Starting server (${INST_TYPE})"
-	$CMD $OPTS & >"$LOG_ERROR" 2>&1
+	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
 	PID=$!
 	sleep 5
 	COUNT=5
@@ -2017,9 +2077,9 @@ function restore()
 	if [ -n "$BINLOG_PREFIX" ]; then
 		BINLOG_DIR="`dirname $BINLOG_PREFIX`" || return 1
 	fi
-	RELAY_LOG_MASK="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION relay_log 2>/dev/null`"
-	if [ -n "$RELAY_LOG_MASK" ]; then
-		RELAY_LOG_DIR="`dirname $RELAY_LOG_MASK`" || return 1
+	RELAY_LOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION relay_log 2>/dev/null`"
+	if [ -n "$RELAY_LOG_PREFIX" ]; then
+		RELAY_LOG_DIR="`dirname $RELAY_LOG_PREFIX`" || return 1
 	fi
 
 	#secure files directory
@@ -2077,8 +2137,8 @@ function restore()
 		if [ -n "$RELAY_LOG_INDEX" ]; then
 			AUX_RELAY_LOG_INDEX="${AUX_BASEDIR}/relay.index"
 		fi
-		if [ -n "$RELAY_LOG_MASK" ]; then
-			AUX_RELAY_LOG_MASK="${AUX_BASEDIR}/relay/relay"
+		if [ -n "$RELAY_LOG_PREFIX" ]; then
+			AUX_RELAY_LOG_PREFIX="${AUX_BASEDIR}/relay/relay"
 		fi
 	fi
 	write_out "Starting restore"
@@ -2123,10 +2183,19 @@ function restore_aux_instance()
 	mkdir -p $AUX_DATADIR || return 1
 	LIM_MEM_OPT=`mount_limit_memory_option`
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
+
+	RELAY_LOG_OPTS=
+	if [ -n "$AUX_RELAY_LOG_PREFIX" ]; then
+		RELAY_LOG_OPTS="--relay-log=$AUX_RELAY_LOG_PREFIX"
+	fi
+	if [ -n "$AUX_RELAY_LOG_INDEX" ]; then
+		RELAY_LOG_OPTS="$RELAY_LOG_OPTS --relay-log-index=$AUX_RELAY_LOG_INDEX"
+	fi
+
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" >$TMP_LOG 2>&1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS >$TMP_LOG 2>&1
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -2135,7 +2204,7 @@ function restore_aux_instance()
 			return 1
 		fi
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" || return 1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 
@@ -2369,8 +2438,8 @@ function run()
 		remove)
 			remove $* || return 1
 			;;
-		drop-db)
-			drop_db $* || return 1
+		drop)
+			drop $* || return 1
 			;;
 		init)
 			init $* || return 1
@@ -2442,7 +2511,7 @@ function main_help()
    echo "   backup"
    echo "   list"
    echo "   init"
-   echo "   drop-db"
+   echo "   drop"
    echo "   remove"
 }
 
