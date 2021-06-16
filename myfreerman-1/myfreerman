@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.8
+RELEASE=1.5.9
 
 function apply_binlog()
 {
@@ -498,9 +498,9 @@ function check_purge_binlogs()
 	#if this instance is a slave, purge binary logs,
 	#no matter what is configured
 	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
-#slave instances show many lines in 'show slave status
+	#slave instances show many lines in 'show slave status
 	COUNT=`mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "show slave status\G" | wc -l`
-	if [ -z "$SLAVE_SERVER" -a $COUNT -gt 5 ]; then #we're a slave
+	if [ $COUNT -gt 10 ]; then #we're a slave
 		LIMIT_LOG=$1
 		write_out "This instance is a slave server"
 		purge_binlogs $LIMIT_LOG || return 1
@@ -613,6 +613,7 @@ function check_target_instance_config()
 	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
 		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
 		drop_target_database
+		rm $TMP_LOG $TMP_CONF
 		return 1
 	fi
 	mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 &
@@ -620,10 +621,11 @@ function check_target_instance_config()
 	if ! wait_server_start $PID "$TMP_CONF"; then
 		write_out "Cannot check target instance configuration. Check server logs in '$LOG_ERROR'."
 		drop_target_database
+		rm $TMP_LOG $TMP_CONF
 		return 1
 	fi
 	kill_pid "$PID_FILE"
-	rm $TMP_CONF
+	rm $TMP_LOG $TMP_CONF
 	drop_target_database || return 1
 }
 
