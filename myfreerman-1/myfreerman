@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.10
+RELEASE=1.5.11
 
 function apply_binlog()
 {
@@ -860,7 +860,7 @@ function find_aux_port()
 
 function find_base_backup()
 {
-	[ -d "$BASE_BACKUP_DIR" ] || { write_out "No backup found" && return 1; }
+	[ -d "$BASE_BACKUP_DIR" ] || { echo "No backup found" >&2 && return 1; }
 	REQ_TIMESTAMP=`date --date="$1" +%Y%m%d%H%M%S` || return 1
 	if [ -z "$REQ_TIMESTAMP" ]; then
 		return 1
@@ -876,7 +876,7 @@ function find_base_backup()
 			return
 		fi
 	done
-	write_out "No backup found"
+	echo "No backup found" >&2
 	return 1
 }
 
