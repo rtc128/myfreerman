@@ -1,0 +1,17 @@
+#!/bin/bash
+
+function run()
+{
+	REL=`grep RELEASE= myfreerman | cut -d = -f 2`
+	make || return 1
+	TAG=v${REL}
+	MSG="Version $REL"
+	git commit -a m "$MSG" || return 1
+	git tag $TAG || return 1
+	git push || return 1
+	git push --tags || return 1
+	publish-rpms
+}
+
+run
+return $?
