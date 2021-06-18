@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.9
+RELEASE=1.5.10
 
 function apply_binlog()
 {
@@ -107,9 +107,9 @@ function backup_binlog()
 	check_lock_file || return 1
 	#list binlogs, just ignoring the last one
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysql $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || (remove_lock_file && return 1)
+	mysql $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
 			
-	TOTAL=`cat $LIST_FILE | wc -l` || (remove_lock_file && return 1)
+	TOTAL=`cat $LIST_FILE | wc -l` || { remove_lock_file && return 1; }
 	COUNT=$((TOTAL - 1))
 	LIST=`head -n $COUNT $LIST_FILE`
 	LAST_BINLOG=`tail -n 1 $LIST_FILE`
@@ -119,10 +119,10 @@ function backup_binlog()
 			LONG_LOGSEQ=`echo $BINLOG | cut -d . -f 2`
 			LOGSEQ=`expr $LONG_LOGSEQ + 0`
 			write_out "Saving binary log sequence $LOGSEQ"
-			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" || (remove_lock_file && return 1)
+			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" || { remove_lock_file && return 1; }
 		fi
 	done
-	check_purge_binlogs $LAST_BINLOG || (remove_lock_file && return 1)
+	check_purge_binlogs $LAST_BINLOG || { remove_lock_file && return 1; }
 	remove_lock_file
 }
 
@@ -193,7 +193,6 @@ function backup_full()
 	mv "${TMP_DIRECTORY}" "${BASE_BACKUP_DIR}" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	LAST_BACKUP=`ls | tail -n 1` || return 1
-	cp "$CONFIG_FILE" "$DIRECTORY/my.cnf" || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
 }
 
@@ -246,16 +245,31 @@ function help_init_database
 
 function help_restore()
 {
-	echo "* Restore database"
-	echo "	restore [ -n ] [ -o <dir> ] [ -p <timestamp> ] [ -s <schema>[:<new name>] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>] [ ... ] ] ] ]"
-	echo "      -n do not create a new database incarnation"
-	echo "		-o use backup saved in <dir>, and not directory set in configuration"
-	echo "		-p restore until <timestmap>"
-	echo "			<timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
-	echo "				hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
-	echo "      -s Restore only specific schema (optionally using a new name)"
-	echo "      -t Restore only specific table (optionally using a new name)"
-	echo "         Multiple -t options are allowed"
+	echo "* Restore data from backup"
+	echo "   restore config"
+	echo "   restore database"
+}
+
+function help_restore_config()
+{
+	echo "* Restore server configuration from backup"
+	echo "** Configuration is printed to standard output"
+   echo "   restore config [ -o <dir> ]"
+   echo "      -o use backup saved in <dir>, and not directory set in configuration"
+}
+
+function help_restore_database()
+{
+	echo "* Restore a database from backup"
+   echo "   restore database [ -n ] [ -o <dir> ] [ -p <timestamp> ] [ -s <schema>[:<new name>] ] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>] [ ... ] ] ]"
+   echo "      -n do not create a new database incarnation"
+   echo "      -o use backup saved in <dir>, and not directory set in configuration (also, do not create a new database incarnation)"
+   echo "      -p restore until <timestmap>"
+   echo "         <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
+   echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+   echo "      -s Restore only specific schema (optionally using a new name)"
+   echo "      -t Restore only specific table (optionally using a new name)"
+   echo "         Multiple -t options are allowed"
 }
 
 function help_init_slave
@@ -495,18 +509,6 @@ function check_lock_file()
 
 function check_purge_binlogs()
 {
-	#if this instance is a slave, purge binary logs,
-	#no matter what is configured
-	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
-	#slave instances show many lines in 'show slave status
-	COUNT=`mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "show slave status\G" | wc -l`
-	if [ $COUNT -gt 10 ]; then #we're a slave
-		LIMIT_LOG=$1
-		write_out "This instance is a slave server"
-		purge_binlogs $LIMIT_LOG || return 1
-		return
-	fi
-
 	if [ -n "$SLAVE_SERVER" -a $USE_AUX_INSTANCE -eq 0 ]; then
 		LIMIT_LOG=`get_current_slave_binlog`
 	else
@@ -858,12 +860,12 @@ function find_aux_port()
 
 function find_base_backup()
 {
+	[ -d "$BASE_BACKUP_DIR" ] || { write_out "No backup found" && return 1; }
 	REQ_TIMESTAMP=`date --date="$1" +%Y%m%d%H%M%S` || return 1
 	if [ -z "$REQ_TIMESTAMP" ]; then
 		return 1
 	fi
-	cd "$BASE_BACKUP_DIR" || return 1
-	for BKP in `ls -r | cut -d . -f 1`; do
+	for BKP in `ls -r "$BASE_BACKUP_DIR" | cut -d . -f 1`; do
 		DATE=${BKP:0:10}
 		TIME=${BKP:11:8}
 		TIME=${TIME//-/:}
@@ -874,7 +876,7 @@ function find_base_backup()
 			return
 		fi
 	done
-	echo "No backup found for requested timestamp" >&2
+	write_out "No backup found"
 	return 1
 }
 
@@ -1987,6 +1989,78 @@ function reset_master()
 
 function restore()
 {
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_restore
+				return
+				;;
+			\?)
+				help_restore
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -lt 1 ]; then
+		help_restore
+		return 1
+	fi
+	CMD=$1
+	shift
+	case $CMD in
+		config)
+			restore_config $* || return 1
+			;;
+		database)
+			restore_database $* || return 1
+			;;
+		*)
+			help_restore
+			return 1
+			;;
+	esac
+}
+
+function restore_config()
+{
+	local OPTIND l_opt
+	while getopts "ho:" l_opt; do
+		case $l_opt in
+			h)
+				help_restore_config
+				return
+				;;
+			o)
+				BACKUP_DIR="${OPTARG}"
+				;;
+			\?)
+				help_restore_config
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 0 ]; then
+		help_restore_config
+		return 1
+	fi
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+	[ -d "$BASE_BACKUP_DIR" ] || { write_out "No backup found" && return 1; }
+	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
+	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
+	DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
+	CONF="$BASE_BACKUP_DIR/$DIR/server-my.cnf"
+	if ! [ -f "$CONF" ]; then
+		write_out "Cannot find server configuration file in backup!"
+		return 1
+	fi
+	grep -v "^#" "$CONF"
+}
+
+function restore_database()
+{
 	DORESET=1
 	PITR=0
 	RESTORE_TABLE_LIST=
@@ -1999,7 +2073,7 @@ function restore()
 				RESTORE_SCHEMA=${OPTARG}
 				;;
 			h)
-				help_restore
+				help_restore_database
 				return
 				;;
 			o)
@@ -2017,13 +2091,14 @@ function restore()
 				RESTORE_TABLE_LIST="$RESTORE_TABLE_LIST ${OPTARG}"
 				;;
 			\?)
-				help_restore
+				help_restore_database
+				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 0 ]; then
-		help_restore
+		help_restore_database
 		return 1
 	fi
 	restore_validate_options || return 1
@@ -2159,10 +2234,10 @@ function restore()
 	fi
 	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" "$CUR_SOCKET" || return 1
 	if [ -n "$RESTORE_SCHEMA_OLD_NAME" ]; then
-		copy_recovered_db || (mysql_stop "$CONFIG" $ITYPE && return 1)
+		copy_recovered_db || { mysql_stop "$CONFIG" $ITYPE && return 1; }
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
-		copy_restored_tables || (mysql_stop "$CONFIG" $ITYPE && return 1)
+		copy_restored_tables || { mysql_stop "$CONFIG" $ITYPE && return 1; }
 	fi
 	if [ $USE_AUX_INSTANCE -eq 0 -a $DORESET -eq 1 ]; then
 		create_incarnation $MOMENT

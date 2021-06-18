@@ -44,6 +44,10 @@ remove
 
 restore
 
+	config
+
+	database
+
 .SH DESCRIPTION
 
 This is a tool that wraps MySQL Enterprise Backup to handle backups of MySQL databases.
@@ -55,6 +59,8 @@ It adds support for:
 - Compressing binlog backups
 
 - Restoring only a schema / only a list of tables
+
+- Restoring server configuration
 
 - Automated PITR
 
@@ -110,7 +116,7 @@ Remove backups.
 
 .B restore
 
-Restore a previously created backup.
+Restore data from backup.
 
 
 .SH SEE ALSO
