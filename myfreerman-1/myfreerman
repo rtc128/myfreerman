@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.11
+RELEASE=1.5.12
 
 function apply_binlog()
 {
@@ -254,8 +254,11 @@ function help_restore_config()
 {
 	echo "* Restore server configuration from backup"
 	echo "** Configuration is printed to standard output"
-   echo "   restore config [ -o <dir> ]"
+   echo "   restore config [ -o <dir> ] [ -p <timestamp> ]"
    echo "      -o use backup saved in <dir>, and not directory set in configuration"
+   echo "      -p restore config in use in <timestmap>"
+   echo "         <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
+   echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
 }
 
 function help_restore_database()
@@ -2007,6 +2010,12 @@ function restore()
 		help_restore
 		return 1
 	fi
+
+#backup dir is required
+	if [ -z "$BACKUP_DIR" ]; then
+		echo "Configuration 'backup_dir' is required" >&2
+		return 1
+	fi
 	CMD=$1
 	shift
 	case $CMD in
@@ -2026,7 +2035,7 @@ function restore()
 function restore_config()
 {
 	local OPTIND l_opt
-	while getopts "ho:" l_opt; do
+	while getopts "ho:p:" l_opt; do
 		case $l_opt in
 			h)
 				help_restore_config
@@ -2034,6 +2043,9 @@ function restore_config()
 				;;
 			o)
 				BACKUP_DIR="${OPTARG}"
+				;;
+			p)
+				USER_TIMESTAMP="${OPTARG}"
 				;;
 			\?)
 				help_restore_config
@@ -2049,6 +2061,10 @@ function restore_config()
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	[ -d "$BASE_BACKUP_DIR" ] || { write_out "No backup found" && return 1; }
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
+	if [ -n "$USER_TIMESTAMP" ]; then
+		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
+		write_out "Requested timestamp: $REQ_TIMESTAMP"
+	fi
 	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
 	CONF="$BASE_BACKUP_DIR/$DIR/server-my.cnf"
