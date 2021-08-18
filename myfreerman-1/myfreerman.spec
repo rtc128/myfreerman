@@ -43,7 +43,7 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 * Fri Jul 09 2021 Rodrigo Tassinari 1.5.12
 - Allow restoring config with specific timestamp
 
-* Fri Jun 16 2021 Rodrigo Tassinari 1.5.10
+* Wed Jun 16 2021 Rodrigo Tassinari 1.5.10
 - Added support for server config restore
 
 * Wed Jun 16 2021 Rodrigo Tassinari 1.5.9
@@ -110,7 +110,7 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 * Thu Nov 26 2020 Rodrigo Tassinari 1.4.31
 - Bug fix in restore
 
-* Wed Nov 24 2020 Rodrigo Tassinari 1.4.30
+* Tue Nov 24 2020 Rodrigo Tassinari 1.4.30
 - Bug fix in slave init
 
 * Wed Nov 04 2020 Rodrigo Tassinari 1.4.29
