@@ -12,11 +12,7 @@ myfreerman reads its configuration from a section in Mysql server's my.cnf confi
 
 aux_basedir: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
 
-backup_directory: Directory where backups are going to be saved.
-
-db_hostname: Database hostname - optional - mysql_config_editor can be used.
-
-db_socket: Database socket path, for local mysql servers - optional - mysql_config_editor can be used.
+backup_dir: Directory where backups are going to be saved.
 
 db_password: Database password - optional - mysql_config_editor can be used.
 
@@ -51,13 +47,11 @@ write_threads: Number of threads for writing tasks.
 
 aux_basedir=/var/tmp/mysql.aux
 
-backup_directory=/mnt/backup
+backup_dir=/mnt/backup
 
 db_username=root
 
 db_password=passwd1234
-
-db_socket=/var/lib/mysql/tmt.sock
 
 log_dir=/var/log/myfreerman
 

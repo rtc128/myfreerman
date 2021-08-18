@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.12
+RELEASE=1.5.13
 
 function apply_binlog()
 {
@@ -398,12 +398,6 @@ function check_config()
 	#WRITE_THREADS
 	if [ $WRITE_THREADS -lt 1 -o $WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
 		echo "Configuration WRITE_THREADS must be between 1 and $MAX_WRITE_THREADS" >&2
-		return 1
-	fi
-
-	#DB_HOSTNAME and DB_SOCKET cannot both be set mutually
-	if [ -n "$DB_HOSTNAME" -a -n "$DB_SOCKET" ]; then
-		echo "Configurations DB_HOSTNAME and DB_SOCKET cannot both be set"
 		return 1
 	fi
 }
@@ -1450,11 +1444,10 @@ function init_slave()
 		return 1
 	fi
 	ANSWER_YES=1
-	SLAVE=1
-	restore -n -o "$BACKUP_DIRECTORY" || exit 1
+	restore_database -n -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
-	mysql_start "$CONFIG_FILE" slave || return 1
+	mysql_start "$CONFIG_FILE" slave --skip-grant-tables || return 1
 
 	#query binlog info at the time of the backup
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
@@ -1585,9 +1578,6 @@ function list_remote()
 function mount_credentials_opt()
 {
 	RESULT=
-	if [ -n "$DB_HOSTNAME" ]; then
-		RESULT="$RESULT --host=$DB_HOSTNAME"
-	fi
 	if [ -n "$DB_USERNAME" ]; then
 		RESULT="$RESULT --user=$DB_USERNAME"
 	fi
@@ -1626,11 +1616,8 @@ function mount_slave_credentials_opt()
 function mount_target_credentials_opt()
 {
 	RESULT=
-	if [ -n "$DB_SOCKET" ]; then
-		RESULT="$RESULT --socket=$DB_SOCKET"
-	fi
-	if [ -n "$DB_HOSTNAME" ]; then
-		RESULT="$RESULT --host=$DB_HOSTNAME"
+	if [ -n "$SERVER_SOCKET" ]; then
+		RESULT="$RESULT --socket=$SERVER_SOCKET"
 	fi
 	if [ -n "$DB_USERNAME" ]; then
 		RESULT="$RESULT --user=$DB_USERNAME"
@@ -1652,10 +1639,13 @@ function mysql_start()
 {
 	CONFIG="$1"
 	INST_TYPE="$2"
+	if [ $# -gt 2 ]; then
+		EXTRA_OPTS="$3"
+	fi
 	START_TIMEOUT=300
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off --skip-grant-tables"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off $EXTRA_OPTS"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
 	PID=$!
@@ -1800,6 +1790,32 @@ function read_binlog()
 
 function read_config()
 {
+	read_db_config || return 1
+	read_rman_config || return 1
+}
+
+function read_db_config()
+{
+	#mount ini section
+	INI_SECTION=mysqld
+	if [ -n "$MYSQL_SID" ]; then
+		INI_SECTION=${INI_SECTION}@${MYSQL_SID}
+	fi
+
+	#server socket
+	SERVER_SOCKET="`crudini --get \"$CONFIG_FILE\" $INI_SECTION socket 2>/dev/null`"
+	#create socket's folder and set owner
+	if [ -n "$SERVER_SOCKET" ]; then
+		DNAME="`dirname $SERVER_SOCKET`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
+	fi
+}
+
+function read_rman_config()
+{
 	#mount ini section
 	INI_SECTION=myfreerman
 	if [ -n "$MYSQL_SID" ]; then
@@ -1817,8 +1833,6 @@ function read_config()
 
 	AUX_BASEDIR="`crudini --get "$CONFIG_FILE" $INI_SECTION aux_basedir 2>/dev/null`"
 
-	DB_SOCKET="`crudini --get "$CONFIG_FILE" $INI_SECTION db_socket 2>/dev/null`"
-	DB_HOSTNAME="`crudini --get "$CONFIG_FILE" $INI_SECTION db_hostname 2>/dev/null`"
 	DB_PASSWORD="`crudini --get "$CONFIG_FILE" $INI_SECTION db_password 2>/dev/null`"
 	DB_USERNAME="`crudini --get "$CONFIG_FILE" $INI_SECTION db_username 2>/dev/null`"
 
@@ -1862,6 +1876,7 @@ function read_config()
 		WRITE_THREADS=1
 	fi
 
+
 	check_config || return 1
 }
 
@@ -1879,7 +1894,7 @@ function recover()
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		ITYPE="aux"
 	fi
-	if ! mysql_start "$CONFIG" $ITYPE; then
+	if ! mysql_start "$CONFIG" $ITYPE --skip-grant-tables; then
 		if [ $USE_AUX_INSTANCE -eq 1 ]; then
 			rm -fr "$AUX_BASEDIR"
 		fi
@@ -2072,7 +2087,7 @@ function restore_config()
 		write_out "Cannot find server configuration file in backup!"
 		return 1
 	fi
-	grep -v "^#" "$CONF"
+	grep -Ev "^#|^\[" "$CONF"
 }
 
 function restore_database()
@@ -2081,7 +2096,7 @@ function restore_database()
 	PITR=0
 	RESTORE_TABLE_LIST=
 	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
-	CUR_SOCKET="$DB_SOCKET"
+	CUR_SOCKET="$SERVER_SOCKET"
 	local OPTIND l_opt
 	while getopts "hno:s:p:t:" l_opt; do
 		case $l_opt in
@@ -2235,6 +2250,7 @@ function restore_database()
 		fi
 	fi
 	write_out "Starting restore"
+	AUDIT_LOG_FILE="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION audit_log_file 2>/dev/null`"
 	MYSQLD_USER="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION user`" 2>/dev/null
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then	
 		restore_target_instance $DIR || return 1
@@ -2433,14 +2449,6 @@ function restore_validate_options()
 		return 1
 	fi
 
-	#for restoration of a specific schema or a specific table, target instance must be local
-	if [ -n "$RESTORE_SCHEMA_OLD_NAME" -o -n "$RESTORE_TABLE_LIST" ]; then
-		if [ -z "$DB_SOCKET" ]; then
-			echo "Restoring specific schemas or tables are not allowed for remote instances" >&2
-			return 1
-		fi
-	fi
-
 	if [ -n "$RESTORE_SCHEMA_OLD_NAME" -a -n "$RESTORE_TABLE_LIST" ]; then
 		echo "Options -s and -t cannot be used together" >&2
 		return 1
@@ -2472,8 +2480,11 @@ function run()
 	LOG_FILE_BASENAME=
 	ANSWER_YES=0
 	QUIET=0
-	while getopts "l:c:qy" opt; do
+	while getopts "hl:c:qy" opt; do
 		case $opt in
+			h)
+				main_help
+				;;
 			l)
 				LOG_FILE_BASENAME=`date "+$OPTARG"` || return 1
 				;;
@@ -2487,6 +2498,7 @@ function run()
 				ANSWER_YES=1
 				;;
 			\?)
+				main_help
 				return 1
 				;;
 		esac
@@ -2593,8 +2605,9 @@ function uncompress_backup()
 
 function main_help()
 {
-	echo "$0 [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
+	echo "$0 [ -h ] [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
 	echo "options:"
+	echo "   h: display this help"
 	echo "   c: use a specific config file"
 	echo "   l: specify format for log file name"
 	echo "   q: quiet mode - do not print release information"
@@ -2606,6 +2619,7 @@ function main_help()
    echo "   init"
    echo "   drop"
    echo "   remove"
+   echo "   restore"
 }
 
 function wait_server_start()
