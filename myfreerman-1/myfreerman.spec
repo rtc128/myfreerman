@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.5.13
+Release:        1.5.14
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,6 +35,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Thu Aug 19 2021 Rodrigo Tassinari 1.5.14
+- Fixed bug in restore when audit plugin is installed
 
 * Wed Aug 18 2021 Rodrigo Tassinari 1.5.13
 - When creating a slave, apply binlogs - so, any old master backup can be used

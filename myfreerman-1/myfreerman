@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.13
+RELEASE=1.5.14
 
 function apply_binlog()
 {
@@ -1894,7 +1894,7 @@ function recover()
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		ITYPE="aux"
 	fi
-	if ! mysql_start "$CONFIG" $ITYPE --skip-grant-tables; then
+	if ! mysql_start "$CONFIG" $ITYPE; then
 		if [ $USE_AUX_INSTANCE -eq 1 ]; then
 			rm -fr "$AUX_BASEDIR"
 		fi
