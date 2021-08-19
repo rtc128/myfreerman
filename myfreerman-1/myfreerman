@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.14
+RELEASE=1.5.15
 
 function apply_binlog()
 {
@@ -1447,7 +1447,7 @@ function init_slave()
 	restore_database -n -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
-	mysql_start "$CONFIG_FILE" slave --skip-grant-tables || return 1
+	mysql_start "$CONFIG_FILE" slave || return 1
 
 	#query binlog info at the time of the backup
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
