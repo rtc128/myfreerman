@@ -3,10 +3,18 @@ RELEASE=1.5.15
 
 function apply_binlog()
 {
-	FILENAME="$1"
-	SOCKET="$2"
-	#mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$FILENAME" || return 1
-	mysql --socket="$SOCKET" <"$FILENAME" || return 1
+	FIRST=$1
+	FILENAME="$2"
+	SOCKET="$3"
+	if ! mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$FILENAME"; then
+		if [ $FIRST -eq 1 ]; then
+			write_out "Binary logs cannot be applied. This might be caused by a misconfiguration in database credentials. Please review your configuration and try \"recover database\" command."
+			return 1
+		else
+			write_out "Some binary logs were applied, but there was an error before applied the last binary log. I really don't know what to do. Please check all your logs, binary log sequences and data."
+			return 1
+		fi
+	fi
 }
 
 function backup()
@@ -37,7 +45,7 @@ function backup()
 	fi
 
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
-	if ! mysqladmin $TARGET_CRED_OPT ping >/dev/null 2>&1; then
+	if ! mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null 2>&1; then
 		write_out "No MySQL server running - ignoring backup"
 		return
 	fi
@@ -86,7 +94,6 @@ function backup_binlog()
 		return 1
 	fi
 	check_config_backup_binlog || return 1
-	cd "$BACKUP_DIR" || return 1
 	if ! exist_base_backup; then
 		echo "No full backup was previously done" >&2
 		return 1
@@ -96,7 +103,7 @@ function backup_binlog()
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
 
 	#flush logs
-	mysqladmin $TARGET_CRED_OPT flush-logs || return 1
+	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs || return 1
 
 	BINLOG_PREFIX="`crudini --get \"$CONFIG_FILE\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
@@ -196,6 +203,67 @@ function backup_full()
 	fix_backup_timestamp $LAST_BACKUP || return 1
 }
 
+function do_apply_binlog()
+{
+	TARGET_CRED_OPT=`mount_target_credentials_opt "$SERVER_CONFIG"`
+	REQ_TIMESTAMP=`crudini --get "$WORKING_FILE" recovery requested_timestamp` 2>/dev/null
+	#if not filled, no restore was previously done
+	if [ -z "$REQ_TIMESTAMP" ]; then
+		write_out "No previous restore done -- aborting recovery"
+		return 1
+	fi
+
+	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
+	BASE_BACKUP=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
+	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
+
+	SOCKET="$1"
+	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
+	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
+	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
+	INST_TYPE="restricted"
+	if [ $USE_AUX_INSTANCE -eq 1 ]; then
+		INST_TYPE="aux"
+	fi
+	if ! mysql_start; then
+		if [ $USE_AUX_INSTANCE -eq 1 ]; then
+			rm -fr "$AUX_BASEDIR"
+		fi
+		return 1
+	fi
+	while binlog_backup_exists $LOGSEQ; do
+		rm $TMP_SQL || return 1
+		touch $TMP_SQL || return 1
+		write_out "Applying binary log sequence $LOGSEQ"
+		read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
+		if ! apply_binlog 1 $TMP_SQL "$SOCKET"; then
+			mysql_stop "$CONFIG" $ITYPE
+			return 1
+		fi
+		LOGSEQ=`expr $LOGSEQ + 1`
+		POSITION=0
+	done
+	crudini --del "$WORKING_FILE" recovery restore_time
+	crudini --del "$WORKING_FILE" recovery requested_timestamp
+	crudini --del "$WORKING_FILE" recovery validated
+
+	if [ $USE_AUX_INSTANCE -eq 1 ]; then
+		while binlog_exists $LOGSEQ; do
+			rm $TMP_SQL || return 1
+			touch $TMP_SQL || return 1
+			write_out "Applying binary log sequence $LOGSEQ"
+			read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
+			if ! apply_binlog 0 $TMP_SQL "$SOCKET"; then
+				mysql_stop "$CONFIG" $ITYPE
+				return 1
+			fi
+			LOGSEQ=`expr $LOGSEQ + 1`
+		done
+	fi
+	rm $TMP_SQL
+}
+
+
 function help_backup()
 {
 	echo "* Make backups"
@@ -241,6 +309,18 @@ function help_init_database
 {
 	echo "* Initialize a new empty database"
 	echo "   init database"
+}
+
+function help_apply()
+{
+	echo "* Apply binary logs"
+	echo "   apply binlog"
+}
+
+function help_apply_binlog()
+{
+	echo "* Apply binary logs to a recently restored database"
+	echo "* This is used when binary logs could not be applied in RESTORE command, for example due to invalid credentials"
 }
 
 function help_restore()
@@ -524,7 +604,6 @@ function check_purge_binlogs()
 
 function check_target_instance_config()
 {
-	START_TIMEOUT=300
 	write_out "Checking target instance configuration"
 
 	#pid file
@@ -1030,7 +1109,6 @@ function header()
 
 function kill_pid()
 {
-	WAIT_TIMEOUT=45
 	PID_FILE="$1"
 	PID=`cat "$PID_FILE"`
 	kill $PID
@@ -1038,7 +1116,7 @@ function kill_pid()
 	COUNT=1
 	while kill -0 $PID 2>/dev/null; do
 		COUNT=$((COUNT + 1))
-		if [ $COUNT -ge $WAIT_TIMEOUT ]; then
+		if [ $COUNT -ge $KILL_WAIT_TIMEOUT ]; then
 			return 1
 		fi
 		sleep 1
@@ -1388,7 +1466,8 @@ function init_database()
 	LINE=`grep -w password "$LOG_ERROR" | tail -n 1`
 	PASSWORD=`echo ${LINE##* }`
 
-	mysql_start "$CONFIG_FILE" "init" || return 1
+	INST_TYPE=init
+	mysql_start || return 1
 
 	write_out "Running initial config commands"
 	#create tmp file with commands
@@ -1399,7 +1478,7 @@ function init_database()
 	echo "grant backup_admin on *.* to root;" >>$SQL
 	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
 	mysql --connect-expired-password --socket="$SERVER_SOCKET" -u root "-p$PASSWORD" <$SQL
-	mysql_stop "$CONFIG_FILE" "init"
+	mysql_stop
 	rm $SQL
 }
 
@@ -1447,7 +1526,8 @@ function init_slave()
 	restore_database -n -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
-	mysql_start "$CONFIG_FILE" slave || return 1
+	INST_TYPE=slave
+	mysql_start || return 1
 
 	#query binlog info at the time of the backup
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
@@ -1456,16 +1536,16 @@ function init_slave()
 	CMD="change master to master_host='$MASTER_HOST', master_port=$MASTER_PORT, master_auto_position=1, master_ssl=1, master_user='$REPL_USERNAME', master_password='$REPL_PASSWD'";
 	write_out "Setting new slave configuration"
 	if ! mysql $TARGET_CRED_OPT -e "$CMD"; then
-		mysql_stop "$CONFIG_FILE" slave || return 1
+		mysql_stop || return 1
 		return 1
 	fi
 	if ! mysql $TARGET_CRED_OPT -e "start slave"; then
-		mysql_stop "$CONFIG_FILE" slave || return 1
+		mysql_stop || return 1
 		return 1
 	fi
 	sleep 1
 	mysql $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error"
-	mysql_stop "$CONFIG_FILE" slave || return 1
+	mysql_stop || return 1
 }
 
 function list()
@@ -1600,7 +1680,7 @@ function mount_limit_memory_option()
 	fi
 }
 
-function mount_slave_credentials_opt()
+function old_mount_slave_credentials_opt()
 {
 	RESULT=
 	RESULT="--host=$SLAVE_HOSTNAME --port=$SLAVE_PORT"
@@ -1616,9 +1696,6 @@ function mount_slave_credentials_opt()
 function mount_target_credentials_opt()
 {
 	RESULT=
-	if [ -n "$SERVER_SOCKET" ]; then
-		RESULT="$RESULT --socket=$SERVER_SOCKET"
-	fi
 	if [ -n "$DB_USERNAME" ]; then
 		RESULT="$RESULT --user=$DB_USERNAME"
 	fi
@@ -1637,21 +1714,15 @@ function mount_aux_defaults_file_opt()
 
 function mysql_start()
 {
-	CONFIG="$1"
-	INST_TYPE="$2"
-	if [ $# -gt 2 ]; then
-		EXTRA_OPTS="$3"
-	fi
-	START_TIMEOUT=300
-	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
+	LOG_ERROR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$CONFIG --bind-address=127.0.0.1 --console --super-read-only=off $EXTRA_OPTS"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$SERVER_CONFIG --bind-address=127.0.0.1 --console --super-read-only=off"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
 	PID=$!
 	sleep 5
 	COUNT=5
-	while [ $COUNT -lt $START_TIMEOUT ]; do
+	while [ $COUNT -lt $SERVER_START_TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
 		fi
@@ -1668,17 +1739,14 @@ function mysql_start()
 
 function mysql_stop()
 {
-	CONFIG="$1"
-	INST_TYPE="$2"
-	STOP_TIMEOUT=300
-	PID_FILE="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
-	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
+	PID_FILE="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION pid_file 2>/dev/null`"
+	LOG_ERROR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	write_out "Stopping server (${INST_TYPE})"
 	PID=`cat "$PID_FILE"`
 	kill $PID
 	sleep 1
 	COUNT=1
-	while [ $COUNT -lt $STOP_TIMEOUT ]; do
+	while [ $COUNT -lt $SERVER_STOP_TIMEOUT ]; do
 		if ! kill -0 $PID 2>/dev/null; then
 			return 0
 		fi
@@ -1702,8 +1770,9 @@ function purge_binlogs()
 {
 	LIMIT_LOG=$1
 	write_out "Purging binary logs (limit: $LIMIT_LOG)"
-	TARGET_CRED_OPT=`mount_target_credentials_opt "$CONFIG_FILE"` || return 1
-	mysql --defaults-file="$CONFIG_FILE" $TARGET_CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	SOCKET="`crudini --get \"$SERVER_CONFIG\" $INI_SECTION socket 2>/dev/null`"
+	mysql --socket="$SOCKET" $TARGET_CRED_OPT -e "purge binary logs to '$LIMIT_LOG';" >/dev/null || return 1
 }
 
 function query()
@@ -1803,7 +1872,7 @@ function read_db_config()
 	fi
 
 	#server socket
-	SERVER_SOCKET="`crudini --get \"$CONFIG_FILE\" $INI_SECTION socket 2>/dev/null`"
+	SERVER_SOCKET="`crudini --get \"$SERVER_CONFIG\" $INI_SECTION socket 2>/dev/null`"
 	#create socket's folder and set owner
 	if [ -n "$SERVER_SOCKET" ]; then
 		DNAME="`dirname $SERVER_SOCKET`" || return 1
@@ -1825,107 +1894,136 @@ function read_rman_config()
 	#config file is not required
 	#for example, in clusters with vip, oem agent runs on a third host
 	#and it must list backups remotely - no configuration required in target host
-	if ! [ -f "$CONFIG_FILE" ]; then
+	if ! [ -f "$RMAN_CONFIG" ]; then
 		return
 	fi
 
-	BACKUP_DIR="`crudini --get "$CONFIG_FILE" $INI_SECTION backup_dir 2>/dev/null`"
+	BACKUP_DIR="`crudini --get "$RMAN_CONFIG" $INI_SECTION backup_dir 2>/dev/null`"
 
-	AUX_BASEDIR="`crudini --get "$CONFIG_FILE" $INI_SECTION aux_basedir 2>/dev/null`"
+	AUX_BASEDIR="`crudini --get "$RMAN_CONFIG" $INI_SECTION aux_basedir 2>/dev/null`"
 
-	DB_PASSWORD="`crudini --get "$CONFIG_FILE" $INI_SECTION db_password 2>/dev/null`"
-	DB_USERNAME="`crudini --get "$CONFIG_FILE" $INI_SECTION db_username 2>/dev/null`"
+	DB_PASSWORD="`crudini --get "$RMAN_CONFIG" $INI_SECTION db_password 2>/dev/null`"
+	DB_USERNAME="`crudini --get "$RMAN_CONFIG" $INI_SECTION db_username 2>/dev/null`"
 
 	#log directory
-	LOG_DIR="`crudini --get "$CONFIG_FILE" $INI_SECTION log_dir 2>/dev/null`"
+	LOG_DIR="`crudini --get "$RMAN_CONFIG" $INI_SECTION log_dir 2>/dev/null`"
 
 	#lock file
-	LOCK_FILE="`crudini --get "$CONFIG_FILE" $INI_SECTION lock_file 2>/dev/null`"
+	LOCK_FILE="`crudini --get "$RMAN_CONFIG" $INI_SECTION lock_file 2>/dev/null`"
 
 	#max memory
-	MAX_MEM="`crudini --get "$CONFIG_FILE" $INI_SECTION max_mem 2>/dev/null`"
+	MAX_MEM="`crudini --get "$RMAN_CONFIG" $INI_SECTION max_mem 2>/dev/null`"
 
 	#read only
-	READ_ONLY="`crudini --get "$CONFIG_FILE" $INI_SECTION read_only 2>/dev/null`"
+	READ_ONLY="`crudini --get "$RMAN_CONFIG" $INI_SECTION read_only 2>/dev/null`"
 	#default: 0
 	if [ -z "${READ_ONLY}" ]; then
 		READ_ONLY=0
 	fi
 
 	#process threads
-	PROCESS_THREADS="`crudini --get "$CONFIG_FILE" $INI_SECTION process_threads 2>/dev/null`"
+	PROCESS_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION process_threads 2>/dev/null`"
 	#default: 1
 	if [ -z "$PROCESS_THREADS" ]; then
 		PROCESS_THREADS=1
 	fi
 
 	#read threads
-	READ_THREADS="`crudini --get "$CONFIG_FILE" $INI_SECTION read_threads 2>/dev/null`"
+	READ_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION read_threads 2>/dev/null`"
 	#default: 1
 	if [ -z "$READ_THREADS" ]; then
 		READ_THREADS=1
 	fi
 
 	#slave server
-	SLAVE_SERVER="`crudini --get "$CONFIG_FILE" $INI_SECTION slave_server 2>/dev/null`"
+	SLAVE_SERVER="`crudini --get "$RMAN_CONFIG" $INI_SECTION slave_server 2>/dev/null`"
+
+	#working file
+	WORKING_FILE="`crudini --get "$RMAN_CONFIG" $INI_SECTION working_file 2>/dev/null`"
+	#default: /var/lib/mysql/myfreerman.work
+	if [ -z "$WORKING_FILE" ]; then
+		WORKING_FILE=/var/lib/mysql/myfreerman.work
+	fi
 
 	#write threads
-	WRITE_THREADS="`crudini --get "$CONFIG_FILE" $INI_SECTION write_threads 2>/dev/null`"
+	WRITE_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION write_threads 2>/dev/null`"
 	#default: 1
 	if [ -z "$WRITE_THREADS" ]; then
 		WRITE_THREADS=1
 	fi
 
-
 	check_config || return 1
 }
 
-function recover()
+function apply()
 {
-	BASE_BACKUP=$1
-	REQ_TIMESTAMP="$2"
-	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
-	CONFIG="$3"
-	SOCKET="$4"
-	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
-	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
-	POSITION=`get_base_backup_binlog_position $BASE_BACKUP`
-	ITYPE="restricted"
-	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		ITYPE="aux"
-	fi
-	if ! mysql_start "$CONFIG" $ITYPE; then
-		if [ $USE_AUX_INSTANCE -eq 1 ]; then
-			rm -fr "$AUX_BASEDIR"
-		fi
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_apply
+				return
+				;;
+			\?)
+				help_apply
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -lt 1 ]; then
+		help_apply
 		return 1
 	fi
-	while binlog_backup_exists $LOGSEQ; do
-		rm $TMP_SQL || return 1
-		touch $TMP_SQL || return 1
-		write_out "Applying binary log sequence $LOGSEQ"
-		read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
-		if ! apply_binlog $TMP_SQL "$SOCKET"; then
-			mysql_stop "$CONFIG" $ITYPE
-			return 1
-		fi
-		LOGSEQ=`expr $LOGSEQ + 1`
-		POSITION=0
-	done
-	if [ $USE_AUX_INSTANCE -eq 1 ]; then
-		while binlog_exists $LOGSEQ; do
-			rm $TMP_SQL || return 1
-			touch $TMP_SQL || return 1
-			write_out "Applying binary log sequence $LOGSEQ"
-			read_binlog $LOGSEQ 0 "$MY_REQ_TIMESTAMP" $TMP_SQL || return 1
-			if ! apply_binlog $TMP_SQL "$SOCKET"; then
-				mysql_stop "$CONFIG" $ITYPE
-				return 1
-			fi
-			LOGSEQ=`expr $LOGSEQ + 1`
-		done
+
+	read_config || return 1
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+
+	#backup dir is required
+	if [ -z "$BACKUP_DIR" ]; then
+		echo "Configuration 'backup_dir' is required" >&2
+		return 1
 	fi
-	rm $TMP_SQL
+	CMD=$1
+	shift
+	case $CMD in
+		binlog)
+			apply_binlog $* || return 1
+			;;
+		*)
+			help_apply
+			return 1
+			;;
+	esac
+}
+
+function apply_binlog()
+{
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_apply_binlog
+				return
+				;;
+			\?)
+				help_apply_binlog
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -gt 0 ]; then
+		help_apply_binlog
+		return 1
+	fi
+
+	#backup dir is required
+	if [ -z "$BACKUP_DIR" ]; then
+		echo "Configuration 'backup_dir' is required" >&2
+		return 1
+	fi
+	do_apply_binlog "$CONFIG" "$SOCKET"
 }
 
 function remove_lock_file()
@@ -2137,6 +2235,14 @@ function restore_database()
 		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
 		write_out "Requested timestamp: $REQ_TIMESTAMP"
 	fi
+	if [ -n "$RESTORE_SCHEMA" -o -n "$RESTORE_TABLE_LIST" ]; then
+		USE_AUX_INSTANCE=1
+	fi
+	if ! crudini --set "$WORKING_FILE" recovery validated 1; then
+		write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+		return 1
+	fi
+
 	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
@@ -2159,10 +2265,8 @@ function restore_database()
 		write_out "Cannot find readable file '$CONFIG_FILE'"
 		return 1
 	fi
-	#check_backup_consistency || return 1
 	cd "$BACKUP_DIR" || return 1
-	if [ -n "$RESTORE_SCHEMA" -o -n "$RESTORE_TABLE_LIST" ]; then
-		USE_AUX_INSTANCE=1
+	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		#target instance must be running
 		if ! mysqladmin $TARGET_CRED_OPT status >/dev/null 2>&1; then
 			write_out "Cannot connect to target instance"
@@ -2260,13 +2364,27 @@ function restore_database()
 	if [ $SLAVE -eq 1 ]; then
 		return
 	fi
+
+	if [ $USE_AUX_INSTANCE -eq 0 ]; then
+		TS=`date +%Y-%m-%d_%H-%M-%S`
+#save restore time
+		if ! crudini --set "$WORKING_FILE" recovery restore_time $TS; then
+			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+			return 1
+		fi
+#save requested timestamp
+		if ! crudini --set "$WORKING_FILE" recovery requested_timestamp $REQ_TIMESTAMP; then
+			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+			return 1
+		fi
+	fi
 	ITYPE="restricted"
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		ITYPE="aux"
 	fi
-	recover $DIR "$REQ_TIMESTAMP" "$CONFIG" "$CUR_SOCKET" || return 1
+	do_apply_binlog || return 1
 	if [ -n "$RESTORE_SCHEMA_OLD_NAME" ]; then
-		copy_recovered_db || { mysql_stop "$CONFIG" $ITYPE && return 1; }
+		copy_recovered_db || { mysql_stop && return 1; }
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
 		copy_restored_tables || { mysql_stop "$CONFIG" $ITYPE && return 1; }
@@ -2476,7 +2594,11 @@ function restore_validate_tablenames()
 
 function run()
 {
-	CONFIG_FILE=/etc/my.cnf
+	KILL_WAIT_TIMEOUT=120
+	SERVER_START_TIMEOUT=360
+	SERVER_STOP_TIMEOUT=300
+
+	RMAN_CONFIG=/etc/my.cnf
 	LOG_FILE_BASENAME=
 	ANSWER_YES=0
 	QUIET=0
@@ -2489,7 +2611,7 @@ function run()
 				LOG_FILE_BASENAME=`date "+$OPTARG"` || return 1
 				;;
 			c)
-				CONFIG_FILE="$OPTARG"
+				RMAN_CONFIG="$OPTARG"
 				;;
 			q)
 				QUIET=1
@@ -2504,9 +2626,7 @@ function run()
 		esac
 	done
 	shift $((OPTIND-1))
-	if [ ${CONFIG_FILE:0:1} != "/" ]; then
-		CONFIG_FILE="${PWD}/${CONFIG_FILE}"
-	fi
+	SERVER_CONFIG="$RMAN_CONFIG"
 
 	if [ $QUIET -eq 0 ]; then
 		header
@@ -2534,14 +2654,11 @@ function run()
 		MYSQL_DEFAULT_GROUP_SUFFIX="@$MYSQL_SID"
 	fi
 	case $CMD in
-		query)
-			query $* || return 1
+		apply)
+			apply $* || return 1
 			;;
 		backup)
 			backup $* || return 1
-			;;
-		remove)
-			remove $* || return 1
 			;;
 		drop)
 			drop $* || return 1
@@ -2552,13 +2669,17 @@ function run()
 		list)
 			list $* || return 1
 			;;
+		query)
+			query $* || return 1
+			;;
+		remove)
+			remove $* || return 1
+			;;
 		restore)
 			restore $* || return 1
 			;;
 		*)
-			if [ -n "$CMD" ]; then
-				echo "Invalid command: $CMD" >&2
-			fi
+			echo "Invalid command: $CMD" >&2
 			main_help
 			return 1
 			;;
@@ -2596,6 +2717,11 @@ function remove()
 	esac
 }
 
+function save_recovery_data()
+{
+	crudini --set "$WORKING_FILE" recovery restore_time "$REQ_TIMESTAMP"
+}
+
 function uncompress_backup()
 {
 	BKP="$1"
@@ -2618,19 +2744,19 @@ function main_help()
    echo "   list"
    echo "   init"
    echo "   drop"
+   echo "   recover"
    echo "   remove"
    echo "   restore"
 }
 
 function wait_server_start()
 {
-	START_TIMEOUT=600
 	PID=$1
 	CONF_FILE="$2"
 	LOG_ERROR="`crudini --get \"$CONF_FILE\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	sleep 5
 	COUNT=5
-	while [ $COUNT -lt $START_TIMEOUT ]; do
+	while [ $COUNT -lt $SERVER_START_TIMEOUT ]; do
 		if tail -n 20 "$LOG_ERROR" | grep -iw "ready for connections" >/dev/null; then
 			return 0
 		fi
