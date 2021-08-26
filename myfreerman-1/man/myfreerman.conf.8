@@ -36,6 +36,9 @@ retention_period: Backup retention period (days).
 slave_server: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
    DEFAULT: no slave is configured.
 
+working_file: File where current operation context will be saved. For instance, APPLY BINLOG command needs this file. Cannot be shared between instances on the same server.
+   DEFAULT: /var/lib/mysql/myfreerman.work
+
 write_threads: Number of threads for writing tasks.
    DEFAULT: 1.
 

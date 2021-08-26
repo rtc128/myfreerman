@@ -16,6 +16,10 @@ myfreerman <command> ... -h
 
 .B commands
 
+apply
+
+	binlog
+
 backup
 
 	full
@@ -72,6 +76,8 @@ It adds support for:
 
 - Drop a database
 
+It cannot be used remotely, because binary logs are saved using OS commands.
+
 .SH CONFIGURATION
 
 The default configuration section is \fBmysqld\fR for the server and \fBmyfreerman\fR for myfreerman. You can define environment variable \fBMYSQL_SID\fR to change the section.
@@ -88,6 +94,11 @@ Exemple: MYSQL_SID=dev => sections are mysqld@dev and myfreerman@dev.
 -y Assume YES to all questions.
 
 -h Print help (any command has this option)
+
+.B apply
+
+	Apply binary logs on a recently restored database.
+
 
 .B backup
 
