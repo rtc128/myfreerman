@@ -1057,12 +1057,12 @@ function get_current_slave_binlog()
 		if [ -z  "$SLAVE_PORT" ]; then
 			SLAVE_PORT=3306
 		fi
-		SLAVE_CRED_OPT=`mount_slave_credentials_opt`
+		CRED_OPT=`mount_target_credentials_opt`
 
 #before getting slave status, check if we can reach it
 		RESULT=1
-		if mysqladmin $SLAVE_CRED_OPT status >/dev/null; then
-			CUR_LOG=`mysql $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
+		if mysqladmin --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $CRED_OPT status >/dev/null; then
+			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
 			if [ $? -ne 0 ]; then
 				return $?
 			fi
