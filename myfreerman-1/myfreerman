@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.5.15
+RELEASE=1.6.0
 
 function backup()
 {
