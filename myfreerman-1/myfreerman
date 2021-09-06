@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.6.0
+RELEASE=1.6.1
 
 function backup()
 {
@@ -91,7 +91,8 @@ function backup_binlog()
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
 
 	#flush logs
-	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs || return 1
+	write_out "Flushing binary logs"
+	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs binary || return 1
 
 	BINLOG_PREFIX="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
