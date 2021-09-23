@@ -964,7 +964,6 @@ function fix_backup_timestamp()
 	NEW_NAME=`get_backup_timestamp $OLD_NAME` || return 1
 	#move only if theu have differente names
 	if [ "$OLD_NAME" != "$NEW_NAME" ]; then
-		echo mv "${BASE_BACKUP_DIR}/${OLD_NAME}" "${BASE_BACKUP_DIR}/${NEW_NAME}" || return 1
 		mv "${BASE_BACKUP_DIR}/${OLD_NAME}" "${BASE_BACKUP_DIR}/${NEW_NAME}" || return 1
 	fi
 }
