@@ -14,6 +14,14 @@ aux_basedir: Directory that the auxiliar instance will use to restore a specific
 
 backup_dir: Directory where backups are going to be saved.
 
+backup_read_threads: Number of threads that will read data in full backups.
+   DEFAULT: 1.
+	MAX: 15.
+
+backup_write_threads: Number of threads that will write backup in full backups.
+   DEFAULT: 1.
+	MAX: 15.
+
 db_password: Database password - optional - mysql_config_editor can be used.
 
 db_username: Database username - optional - mysql_config_editor can be used.
@@ -28,8 +36,13 @@ max_mem: max memory Enterprise Backup is allowed to use - in Mb.
 read_only: 1 to avoid making backups. Useful for safety when an instance is always only a copy from another one.
    DEFAULT: 0
 
-read_threads: Number of threads for reading tasks.
+restore_read_threads: Number of threads that will read backup in restore operations.
    DEFAULT: 1.
+	MAX: 15.
+
+restore_write_threads: Number of threads that will write data in restore operations.
+   DEFAULT: 1.
+	MAX: 15.
 
 retention_period: Backup retention period (days).
 
@@ -38,9 +51,6 @@ slave_server: Hostname and port of the slave server that is receiving updates fr
 
 working_file: File where current operation context will be saved. For instance, APPLY BINLOG command needs this file. Cannot be shared between instances on the same server.
    DEFAULT: /var/lib/mysql/myfreerman.work
-
-write_threads: Number of threads for writing tasks.
-   DEFAULT: 1.
 
 .SH EXAMPLE
 
@@ -62,9 +72,13 @@ lock_file=/var/lib/myfreerman.lock
 
 retention_period=20
 
-read_threads=5
+backup_read_threads=2
 
-write_threads=5
+backup_write_threads=2
+
+restore_read_threads=4
+
+restore_write_threads=4
 
 .SH SEE ALSO
 myfreerman(1)

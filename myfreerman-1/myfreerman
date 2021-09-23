@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.6.1
+RELEASE=1.6.2
 
 function backup()
 {
@@ -163,7 +163,7 @@ function backup_full()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
+		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -173,7 +173,7 @@ function backup_full()
 			return 1
 		fi
 	else
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
+		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -184,8 +184,7 @@ function backup_full()
 	fi
 	#move tmp directory to permanent dst
 	mv "${TMP_DIRECTORY}" "${BASE_BACKUP_DIR}" || return 1
-	cd "$BASE_BACKUP_DIR" || return 1
-	LAST_BACKUP=`ls | tail -n 1` || return 1
+	LAST_BACKUP=`ls "${BASE_BACKUP_DIR}" | tail -n 1` || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
 }
 
@@ -457,15 +456,27 @@ function check_config()
 		return 1
 	fi
 
-	#READ_THREADS
-	if [ $READ_THREADS -lt 1 -o $READ_THREADS -gt $MAX_READ_THREADS ]; then
-		echo "Configuration 'read_threads' must be between 1 and $MAX_READ_THREADS" >&2
+	#backup read threads
+	if [ $BACKUP_READ_THREADS -lt 1 -o $BACKUP_READ_THREADS -gt $MAX_READ_THREADS ]; then
+		echo "Configuration 'backup_read_threads' must be between 1 and $MAX_READ_THREADS" >&2
 		return 1
 	fi
 
-	#WRITE_THREADS
-	if [ $WRITE_THREADS -lt 1 -o $WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
-		echo "Configuration WRITE_THREADS must be between 1 and $MAX_WRITE_THREADS" >&2
+	#restore read threads
+	if [ $RESTORE_READ_THREADS -lt 1 -o $RESTORE_READ_THREADS -gt $MAX_READ_THREADS ]; then
+		echo "Configuration 'restore_read_threads' must be between 1 and $MAX_READ_THREADS" >&2
+		return 1
+	fi
+
+	#backup write threads
+	if [ $BACKUP_WRITE_THREADS -lt 1 -o $BACKUP_WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
+		echo "Configuration 'backup_write_threads' must be between 1 and $MAX_WRITE_THREADS" >&2
+		return 1
+	fi
+
+	#restore write threads
+	if [ $RESTORE_WRITE_THREADS -lt 1 -o $RESTORE_WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
+		echo "Configuration 'restore_write_threads' must be between 1 and $MAX_WRITE_THREADS" >&2
 		return 1
 	fi
 }
@@ -898,12 +909,17 @@ function exist_base_backup()
 	return 0
 }
 
-function fix_timestamps()
+function get_backup_timestamp()
 {
-	cd $BASE_BACKUP_DIR || return 1
-	for BACKUP in *; do
-		fix_backup_timestamp $BACKUP || return 1
-	done
+	BACKUP="$1"
+	END_TIME_UTC=`grep -w "end_time_utc" "${BASE_BACKUP_DIR}/${BACKUP}/meta/backup_variables.txt" | cut -d '=' -f 2 | cut -d ':' -f 1`
+	if [ -z "$END_TIME_UTC" ]; then
+		write_out "Can't find timestamp when backup was finished"
+		return 1
+	fi
+	#unit time is in first 10 chars
+	UNIX_TIME=${END_TIME_UTC:0:10}
+	date -d @${UNIX_TIME} +%Y-%m-%d_%H-%M-%S
 }
 
 function find_aux_port()
@@ -944,16 +960,12 @@ function find_base_backup()
 
 function fix_backup_timestamp()
 {
-	BACKUP=$1
-	cd $BASE_BACKUP_DIR || return 1
-	LOGSEQ=`get_base_backup_binlog_sequence $BACKUP` || return 1
-	POSITION=`get_base_backup_binlog_position $BACKUP` || return 1
-	BINLOG=`get_binlog_path $LOGSEQ` || return 1
-	NEWNAME=`get_binlog_transaction_timestamp $BINLOG $POSITION` || return 1
-	if [ "$BACKUP" != "$NEWNAME" ]; then
-		if [ -d ${BACKUP} ]; then
-			mv $BACKUP $NEWNAME || return 1
-		fi
+	OLD_NAME=$1
+	NEW_NAME=`get_backup_timestamp $OLD_NAME` || return 1
+	#move only if theu have differente names
+	if [ "$OLD_NAME" != "$NEW_NAME" ]; then
+		echo mv "${BASE_BACKUP_DIR}/${OLD_NAME}" "${BASE_BACKUP_DIR}/${NEW_NAME}" || return 1
+		mv "${BASE_BACKUP_DIR}/${OLD_NAME}" "${BASE_BACKUP_DIR}/${NEW_NAME}" || return 1
 	fi
 }
 
@@ -1917,18 +1929,21 @@ function read_rman_config()
 		READ_ONLY=0
 	fi
 
-	#process threads
-	PROCESS_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION process_threads 2>/dev/null`"
+	#process threads (1)
+	PROCESS_THREADS=1
+
+	#backup read threads
+	BACKUP_READ_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION backup_read_threads 2>/dev/null`"
 	#default: 1
-	if [ -z "$PROCESS_THREADS" ]; then
-		PROCESS_THREADS=1
+	if [ -z "$BACKUP_READ_THREADS" ]; then
+		BACKUP_READ_THREADS=1
 	fi
 
-	#read threads
-	READ_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION read_threads 2>/dev/null`"
+	#restore read threads
+	RESTORE_READ_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION restore_read_threads 2>/dev/null`"
 	#default: 1
-	if [ -z "$READ_THREADS" ]; then
-		READ_THREADS=1
+	if [ -z "$RESTORE_READ_THREADS" ]; then
+		RESTORE_READ_THREADS=1
 	fi
 
 	#slave server
@@ -1941,11 +1956,18 @@ function read_rman_config()
 		WORKING_FILE=/var/lib/mysql/myfreerman.work
 	fi
 
-	#write threads
-	WRITE_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION write_threads 2>/dev/null`"
+	#backup write threads
+	BACKUP_WRITE_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION backup_write_threads 2>/dev/null`"
 	#default: 1
-	if [ -z "$WRITE_THREADS" ]; then
-		WRITE_THREADS=1
+	if [ -z "$BACKUP_WRITE_THREADS" ]; then
+		BACKUP_WRITE_THREADS=1
+	fi
+
+	#restore write threads
+	RESTORE_WRITE_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION restore_write_threads 2>/dev/null`"
+	#default: 1
+	if [ -z "$RESTORE_WRITE_THREADS" ]; then
+		RESTORE_WRITE_THREADS=1
 	fi
 
 	check_config || return 1
@@ -2437,7 +2459,7 @@ function restore_aux_instance()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS >$TMP_LOG 2>&1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS >$TMP_LOG 2>&1
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -2446,7 +2468,7 @@ function restore_aux_instance()
 			return 1
 		fi
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS || return 1
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS || return 1
 	fi
 	write_out "===== FINISHED mysqlbackup ===== "
 
@@ -2528,7 +2550,7 @@ function restore_target_instance()
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG >>"$LOG_FILE"
 		cat $TMP_LOG
@@ -2537,7 +2559,7 @@ function restore_target_instance()
 			return 1
 		fi
 	else
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$READ_THREADS --write-threads=$WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" || return 1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" || return 1 
 	fi
 	write_out "===== FINISHED mysqlbackup ====="
 #===========================================
@@ -2799,10 +2821,8 @@ fi
 NOW_EPOCH=`date +%s`
 DATE_VAL=`date +%Y-%m-%d`
 TIME_VAL=`date +%H:%M:%S`
-MAX_READ_THREADS=20
-MAX_WRITE_THREADS=20
-READ_THREADS=1
-WRITE_THREADS=1
+MAX_READ_THREADS=15
+MAX_WRITE_THREADS=15
 READ_ONLY=0
 LOG_FILE=
 check_depends || exit -1

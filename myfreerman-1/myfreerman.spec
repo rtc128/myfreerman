@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.6.1
+Release:        1.6.2
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,6 +35,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Thu Sep 23 2021 Rodrigo Tassinari 1.6.2
+- READ/WRITE threads configs are now segmented (backup_read_threads; backup_write_threads; restore_read_threads; restore_write_threads)
 
 * Mon Sep 6 2021 Rodrigo Tassinari 1.6.1
 - Bug fix in binary log backup: if some log (general, slow) FS is full, it was failing
