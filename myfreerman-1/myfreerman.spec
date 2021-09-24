@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.6.2
+Release:        1.6.3
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,6 +35,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Fri Sep 24 2021 Rodrigo Tassinari 1.6.3
+- Creating aux instance for PITR of single object: when not able to start aux instance, leave the instance untouched and let the user diagnose.
 
 * Thu Sep 23 2021 Rodrigo Tassinari 1.6.2
 - READ/WRITE threads configs are now segmented (backup_read_threads; backup_write_threads; restore_read_threads; restore_write_threads)

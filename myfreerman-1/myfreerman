@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.6.2
+RELEASE=1.6.3
 
 function backup()
 {
@@ -215,12 +215,7 @@ function do_apply_binlog()
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		INST_TYPE="aux"
 	fi
-	if ! mysql_start; then
-		if [ $USE_AUX_INSTANCE -eq 1 ]; then
-			rm -fr "$AUX_BASEDIR"
-		fi
-		return 1
-	fi
+	mysql_start || return 1
 	FIRST=1
 	while binlog_backup_exists $LOGSEQ; do
 		rm $TMP_SQL || return 1
@@ -1741,7 +1736,7 @@ function mysql_start()
 		sleep 1
 		COUNT=$((COUNT + 1))
 	done
-	write_out "Timeout reached waiting for server to start. Please check server logs in '$LOG_ERROR'"
+	write_out "Timeout reached waiting for server to start. I'm quiting and leaving server as is. Please check server config in file '$CONFIG'"
 	return 1
 }
 
@@ -2359,18 +2354,18 @@ function restore_database()
 			return 1
 		fi
 		check_aux_binaries || return 1
-		AUX_BASEDIR=`mktemp -d -p "$AUX_BASEDIR" -t "aux_XXXXXXXX"` || return 1
+		AUX_BASEDIR=`mktemp -d -p "$AUX_BASEDIR" -t "aux.XXXXXX"` || return 1
 		BASENAME=`basename "$AUX_BASEDIR"` || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$AUX_BASEDIR" || return 1
 		fi
 		DORESET=0
-		AUX_CONFIG=/tmp/${BASENAME}.cnf
+		AUX_CONFIG="${AUX_BASEDIR}/my.cnf"
 		CONFIG="$AUX_CONFIG"
 		AUX_BINLOG_PREFIX="${AUX_BASEDIR}/binlog/binlog"
 		AUX_BINLOG_INDEX="${AUX_BASEDIR}/binlog.index"
 		AUX_DATADIR="$AUX_BASEDIR/datadir"
-		AUX_LOG_ERROR=`mktemp /tmp/mysql.XXXXXX.log`
+		AUX_LOG_ERROR="${AUX_BASEDIR}/mysqld.log"
 		AUX_PID_FILE="$AUX_BASEDIR/pid_file"
 		AUX_SOCKET="$AUX_BASEDIR/socket"
 		AUX_PORT=`find_aux_port` || return 1
@@ -2434,7 +2429,6 @@ function restore_database()
 	#if using aux instance, remove files
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		rm -fr "$AUX_BASEDIR"
-		rm "$AUX_LOG_ERROR"
 	fi
 }
 
@@ -2630,8 +2624,8 @@ function restore_validate_tablenames()
 
 function run()
 {
-	KILL_WAIT_TIMEOUT=120
-	SERVER_START_TIMEOUT=360
+	KILL_WAIT_TIMEOUT=300
+	SERVER_START_TIMEOUT=600
 	SERVER_STOP_TIMEOUT=300
 
 	RMAN_CONFIG=/etc/my.cnf
