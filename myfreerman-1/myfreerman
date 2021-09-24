@@ -92,7 +92,14 @@ function backup_binlog()
 
 	#flush logs
 	write_out "Flushing binary logs"
-	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs binary || return 1
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs binary >"$BUFF" 2>&1
+	RC=$?
+	write_file_out "$BUFF"
+	rm "$BUFF"
+	if [ $RC -ne 0 ]; then
+		return 1
+	fi
 
 	BINLOG_PREFIX="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION log_bin 2>/dev/null`"
 	if [ -n "$BINLOG_PREFIX" ]; then
@@ -2796,6 +2803,15 @@ function wait_server_start()
 		sleep 1
 		COUNT=$((COUNT + 1))
 	done
+}
+
+function write_file_out()
+{
+	F="$1"
+	cat "$F"
+	if [ -n "$LOG_FILE" ]; then
+		cat "$F" >>"$LOG_FILE"
+	fi
 }
 
 function write_out()
