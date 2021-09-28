@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.7.0
+RELEASE=1.7.1
 
 function analyze_gz_event_size()
 {
@@ -418,6 +418,7 @@ function help_list_events
 	echo "* List events in binary logs"
 	echo "   list events <min>"
 	echo "      Lists events generated in the last <min> minutes"
+	echo "      Output contains the following colums: binlog sequence number, date, time, manipulated table, operation, packet size (Mb)"
 }
 
 function binlog_backup_exists()
@@ -1707,7 +1708,8 @@ function list_binlog()
 function list_backup_events()
 {
 	MIN_DATE="$1"
-	OUTPUT="$2"
+	OUTPUT1="$2"
+	OUTPUT2="$3"
 	#if backup binlog dir doesn't exist, list empty
 	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
 		return
@@ -1720,7 +1722,8 @@ function list_backup_events()
 			SEQ=`echo $F | cut -d . -f 2`
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX.${SEQ}`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
-			list_one_binlog_events "${BINLOG}" "$MIN_DATE" >>"$OUTPUT"
+			list_one_binlog_events "${BINLOG}" "$MIN_DATE" >>"$OUTPUT1"
+			list_one_binlog_events_new "${BINLOG}" "$MIN_DATE" >>"$OUTPUT2"
 			RC=$?
 			rm $BINLOG
 			if [ $RC -eq 100 ]; then
@@ -1730,7 +1733,8 @@ function list_backup_events()
 		fi
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
-			list_one_binlog_events "${FPATH}" "$MIN_DATE" >>"$OUTPUT"
+			list_one_binlog_events "${FPATH}" "$MIN_DATE" >>"$OUTPUT1"
+			list_one_binlog_events_new "${FPATH}" "$MIN_DATE" >>"$OUTPUT2"
 			if [ $? -eq 100 ]; then
 				break
 			fi
@@ -1766,19 +1770,22 @@ function list_events()
 	MINUTE_COUNT=$1
 	MIN_DATE=`date --date="-$MINUTE_COUNT minutes" +"%F %T"`
 
-	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
-	list_local_events "$MIN_DATE" $OUTPUT
+	OUTPUT1=`mktemp /tmp/myfreerman.XXXXXX`
+	OUTPUT2=`mktemp /tmp/myfreerman.XXXXXX`
+	list_local_events "$MIN_DATE" $OUTPUT1 $OUTPUT2
 	if [ $? -ne 100 ]; then
-		list_backup_events "$MIN_DATE" $OUTPUT
+		list_backup_events "$MIN_DATE" $OUTPUT1 $OUTPUT2
 	fi
-	sort $OUTPUT
-	rm $OUTPUT
+	sort $OUTPUT1
+	sort $OUTPUT2
+	rm $OUTPUT1 $OUTPUT2
 }
 
 function list_local_events()
 {
 	MIN_DATE="$1"
-	OUTPUT="$2"
+	OUTPUT1="$2"
+	OUTPUT2="$3"
 
 	#check if server has binary logs
 	LOG_BIN=`get_server_config log_bin` || return 1
@@ -1801,7 +1808,8 @@ function list_local_events()
 	for i in `seq 1 $COUNT`; do
 		NAME=`tail -n $i $BINLOG_LIST | head -n 1`
 		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
-		list_one_binlog_events "${FULL_NAME}" "$MIN_DATE" $CHECK_LAST_TS >>"$OUTPUT"
+		list_one_binlog_events "${FULL_NAME}" "$MIN_DATE" $CHECK_LAST_TS >>"$OUTPUT1"
+		list_one_binlog_events_new "${FULL_NAME}" "$MIN_DATE" $CHECK_LAST_TS >>"$OUTPUT2"
 		if [ $? -eq 100 ]; then
 			rm $BINLOG_LIST
 			return 100
@@ -1840,6 +1848,7 @@ function list_one_binlog_events()
 {
 	FULL_PATH="$1"
 	MIN_DATE="$2"
+	return
 
 	#if binlog does not exist, just ignore it because probably binlogs were flushed
 	if ! [ -f "$FULL_PATH" ]; then
@@ -1906,6 +1915,69 @@ function list_one_binlog_events()
 		printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB
 		rm $CMD_BUFF
 	done
+	rm $START_BUFF
+	rm $SQL
+}
+
+function list_one_binlog_events_new()
+{
+	FULL_PATH="$1"
+	MIN_DATE="$2"
+
+	#if binlog does not exist, just ignore it because probably binlogs were flushed
+	if ! [ -f "$FULL_PATH" ]; then
+		return
+	fi
+
+	#sequence is the last 6 chars in binlog path
+	SEQ=${FULL_PATH:(-6)}
+	#create tmp file for sql
+	SQL=`mktemp /tmp/myfreerman.XXXXXX`
+	mysqlbinlog --start-datetime="$MIN_DATE" --result-file $SQL "$FULL_PATH" || return 1
+
+	#if last event in binlog is earlier than our min date, ignore this binlog and return specific code (100)
+	LAST_TS="`get_binlog_last_event_timestamp $SQL`"
+	if [[ "$LAST_TS" < "$MIN_DATE" ]]; then
+		rm $SQL
+		return 100
+	fi
+
+	FILE_LINES=`wc -l $SQL | cut -d \  -f 1`
+	START_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+
+	#list all table maps (table_map
+	grep -win table_map $SQL >$START_BUFF
+
+	#for each table map
+	while IFS= read -r MAP_LINE; do
+		MAP_END_LOG_POS=`echo $MAP_LINE | cut -d \  -f 7`
+		TABLE=`echo $MAP_LINE | cut -d \  -f 11`
+		LINE_NUM=`echo $MAP_LINE | cut -d : -f 1`
+		#look forward until 'STMT_END_F' is found
+		TAIL_LINES=$((FILE_LINES-LINE_NUM))
+		END_LINE=`tail -n $TAIL_LINES $SQL | grep -m 1 -w STMT_END_F`
+		STMT_END_LOG_POS=`echo $END_LINE | cut -d \  -f 7`
+		SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
+
+		Y="20${END_LINE:1:2}"
+		M="${END_LINE:3:2}"
+		D="${END_LINE:5:2}"
+		DATE="$Y-$M-$D"
+		TIME="${END_LINE:8:8}"
+
+		#operation
+		RAW_OP=`echo $END_LINE | cut -d \  -f 10`
+		#split op name and uppercate
+		L_OP=`echo $RAW_OP | cut -d _ -f 1`
+		OP=${L_OP^^}
+		#'WRITE' means INSET
+		if [ "$OP" == "WRITE" ]; then
+			OP="INSERT"
+		fi
+
+		SIZE_MB=`echo scale=2\; $SIZE / 0.74 / 1024 /1024 | bc -s`
+		printf "%s %s %s %-80s %-9s %s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB
+	done <$START_BUFF
 	rm $START_BUFF
 	rm $SQL
 }
