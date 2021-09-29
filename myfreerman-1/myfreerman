@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.7.1
+RELEASE=1.7.2
 
 function analyze_gz_event_size()
 {
@@ -216,7 +216,7 @@ function backup_full()
 
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
+		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -226,7 +226,7 @@ function backup_full()
 			return 1
 		fi
 	else
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --process-threads=$PROCESS_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
+		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS ----backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -1848,7 +1848,6 @@ function list_one_binlog_events()
 {
 	FULL_PATH="$1"
 	MIN_DATE="$2"
-	return
 
 	#if binlog does not exist, just ignore it because probably binlogs were flushed
 	if ! [ -f "$FULL_PATH" ]; then
@@ -1868,54 +1867,37 @@ function list_one_binlog_events()
 		return 100
 	fi
 
-	FILE_LINES=`wc -l $SQL | cut -d \  -f 1`
-	START_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-	grep -wn ^BINLOG $SQL | cut -d : -f 1 >$START_BUFF
-	for N in `cat $START_BUFF`; do
-		TAIL_LINES=$((FILE_LINES-N+1))
-		TAIL_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-		tail -n $TAIL_LINES $SQL >$TAIL_BUFF
-
-		#prefix buffer: a few lines before BINLOG cmd, to get date, time, table and operation
-		PREFIX_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-		head -n $N $SQL | tail -n 2000 >$PREFIX_BUFF
-		#find table
-		TABLE=`grep -wi table_map $PREFIX_BUFF | tail -n 1 | cut -d \  -f 12`
-#continue only if there is a table
-		if [ -z "$TABLE" ]; then
-			rm $TAIL_BUFF
-			rm $PREFIX_BUFF
-			continue
+	#for each line
+	while IFS= read -r LINE; do
+		#if line is a table mapping, save table name and position of the end of the mapping, which is the beginning of the event
+		if [[ "$LINE" =~ .*"Table_map".* ]]; then
+			MAP_END_LOG_POS=`echo $MAP_LINE | cut -d \  -f 7`
+			TABLE=`echo $LINE | cut -d \  -f 11`
 		fi
+		#if line is STATEMENT END
+		if [[ "$LINE" =~ .*"STMT_END_F".* ]]; then
+			STMT_END_LOG_POS=`echo $LINE | cut -d \  -f 7`
+			SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
+			Y="20${LINE:1:2}"
+			M="${LINE:3:2}"
+			D="${LINE:5:2}"
+			DATE="$Y-$M-$D"
+			TIME="${LINE:8:8}"
 
-		PREFIX_LINE=`grep -w STMT_END_F $PREFIX_BUFF | tail -n 1`
-		rm $PREFIX_BUFF
-		Y="20${PREFIX_LINE:1:2}"
-		M="${PREFIX_LINE:3:2}"
-		D="${PREFIX_LINE:5:2}"
-		DATE="$Y-$M-$D"
-		TIME="${PREFIX_LINE:8:8}"
+			#operation
+			RAW_OP=`echo $LINE | cut -d \  -f 10`
+			#split op name and uppercate
+			L_OP=`echo $RAW_OP | cut -d _ -f 1`
+			OP=${L_OP^^}
+			#'WRITE' means INSET
+			if [ "$OP" == "WRITE" ]; then
+				OP="INSERT"
+			fi
 
-		#operation
-		RAW_OP=`echo $PREFIX_LINE | cut -d \  -f 10`
-		#split op name and uppercate
-		L_OP=`echo $RAW_OP | cut -d _ -f 1`
-		OP=${L_OP^^}
-		#'WRITE' means INSET
-		if [ "$OP" == "WRITE" ]; then
-			OP="INSERT"
+			SIZE_MB=`echo scale=2\; $SIZE / 1024 /1024 | bc -s`
+			printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB
 		fi
-
-		END_LINE=`grep -m 1 -n \\; $TAIL_BUFF | cut -d : -f 1`
-		CMD_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-		head -n $END_LINE $TAIL_BUFF >$CMD_BUFF
-		rm $TAIL_BUFF
-		SIZE=`stat --printf=%s $CMD_BUFF`
-		SIZE_MB=`echo scale=2\; $SIZE / 1024 /1024 | bc -s`
-		printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB
-		rm $CMD_BUFF
-	done
-	rm $START_BUFF
+	done <$SQL
 	rm $SQL
 }
 
@@ -1923,6 +1905,7 @@ function list_one_binlog_events_new()
 {
 	FULL_PATH="$1"
 	MIN_DATE="$2"
+	return
 
 	#if binlog does not exist, just ignore it because probably binlogs were flushed
 	if ! [ -f "$FULL_PATH" ]; then
@@ -1955,6 +1938,7 @@ function list_one_binlog_events_new()
 		LINE_NUM=`echo $MAP_LINE | cut -d : -f 1`
 		#look forward until 'STMT_END_F' is found
 		TAIL_LINES=$((FILE_LINES-LINE_NUM))
+		#time tail -n $TAIL_LINES $SQL | grep -m 1 -w STMT_END_F
 		END_LINE=`tail -n $TAIL_LINES $SQL | grep -m 1 -w STMT_END_F`
 		STMT_END_LOG_POS=`echo $END_LINE | cut -d \  -f 7`
 		SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
