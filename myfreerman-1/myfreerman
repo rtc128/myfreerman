@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.7.2
+RELEASE=1.7.4
 
 function analyze_gz_event_size()
 {
@@ -226,7 +226,7 @@ function backup_full()
 			return 1
 		fi
 	else
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS ----backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
+		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -416,9 +416,11 @@ function help_list()
 function help_list_events
 {
 	echo "* List events in binary logs"
-	echo "   list events <min>"
+	echo "   list events -t <threads> <min>"
 	echo "      Lists events generated in the last <min> minutes"
 	echo "      Output contains the following colums: binlog sequence number, date, time, manipulated table, operation, packet size (Mb)"
+	echo "      -t: Use <threads> to process logs"
+	echo "         min: 1, max: 20, default: 1"
 }
 
 function binlog_backup_exists()
@@ -1722,8 +1724,7 @@ function list_backup_events()
 			SEQ=`echo $F | cut -d . -f 2`
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX.${SEQ}`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
-			list_one_binlog_events "${BINLOG}" "$MIN_DATE" >>"$OUTPUT1"
-			list_one_binlog_events_new "${BINLOG}" "$MIN_DATE" >>"$OUTPUT2"
+			list_one_binlog_events "${BINLOG}" "$MIN_DATE" "$OUTPUT1"
 			RC=$?
 			rm $BINLOG
 			if [ $RC -eq 100 ]; then
@@ -1733,8 +1734,7 @@ function list_backup_events()
 		fi
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
-			list_one_binlog_events "${FPATH}" "$MIN_DATE" >>"$OUTPUT1"
-			list_one_binlog_events_new "${FPATH}" "$MIN_DATE" >>"$OUTPUT2"
+			list_one_binlog_events "${FPATH}" "$MIN_DATE" "$OUTPUT1"
 			if [ $? -eq 100 ]; then
 				break
 			fi
@@ -1753,9 +1753,12 @@ function list_binlog_remote()
 
 function list_events()
 {
+	THREADS=1
 	local OPTIND l_opt
-	while getopts "" l_opt; do
+	while getopts "t:" l_opt; do
 		case $l_opt in
+			t)
+				THREADS=$OPTARG;;
 			\?)
 				help_list_events
 				return 1
@@ -1765,6 +1768,16 @@ function list_events()
 	shift $((OPTIND-1))
 	if [ $# -ne 1 ]; then
 		help_list_events
+		return 1
+	fi
+
+#check threads
+	if [ $THREADS -eq 0 ]; then
+		write_out "Number of threads must be greater than 1"
+		return 1
+	fi
+	if [ $THREADS -gt 20 ]; then
+		write_out "Number of threads cannot be greater than 20"
 		return 1
 	fi
 	MINUTE_COUNT=$1
@@ -1802,19 +1815,16 @@ function list_local_events()
 	BINLOG_LIST=`mktemp /tmp/myfreerman.XXXXXX`
 	list_server_binlogs >$BINLOG_LIST || return 1
 
-	CHECK_LAST_TS=0
 	#for each binlog, from last to first
 	COUNT=`wc -l $BINLOG_LIST | cut -d \  -f 1`
 	for i in `seq 1 $COUNT`; do
 		NAME=`tail -n $i $BINLOG_LIST | head -n 1`
 		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
-		list_one_binlog_events "${FULL_NAME}" "$MIN_DATE" $CHECK_LAST_TS >>"$OUTPUT1"
-		list_one_binlog_events_new "${FULL_NAME}" "$MIN_DATE" $CHECK_LAST_TS >>"$OUTPUT2"
+		list_one_binlog_events "${FULL_NAME}" "$MIN_DATE" "$OUTPUT1"
 		if [ $? -eq 100 ]; then
 			rm $BINLOG_LIST
 			return 100
 		fi
-		CHECK_LAST_TS=1
 	done
 	rm $BINLOG_LIST
 }
@@ -1848,6 +1858,7 @@ function list_one_binlog_events()
 {
 	FULL_PATH="$1"
 	MIN_DATE="$2"
+	OUTPUT="$3"
 
 	#if binlog does not exist, just ignore it because probably binlogs were flushed
 	if ! [ -f "$FULL_PATH" ]; then
@@ -1867,15 +1878,43 @@ function list_one_binlog_events()
 		return 100
 	fi
 
+	#list only marks
+	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	grep -Ew 'Table_map|STMT_END_F' $SQL >$MARK_LIST
+	TOTAL_LINES=`wc -l $MARK_LIST | cut -d \  -f 1`
+	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS))
+	START_LINE=1
+	for I in `seq 1 $THREADS`; do
+		list_one_binlog_events_th "$MARK_LIST" $TOTAL_LINES $START_LINE $THREAD_LINE_COUNT "$OUTPUT" &
+		START_LINE=$((START_LINE+THREAD_LINE_COUNT))
+	done
+	wait
+
+	rm $SQL $MARK_LIST
+}
+
+function list_one_binlog_events_th()
+{
+	INPUT="$1"
+	TOTAL_LINES=$2
+	START_LINE=$3
+	LINE_COUNT=$4
+	OUTPUT="$5"
+	
+	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	TAIL=$((TOTAL_LINES-START_LINE))
+	tail -n $TAIL "$INPUT" | head -n $LINE_COUNT >$MARK_LIST
+
 	#for each line
 	while IFS= read -r LINE; do
 		#if line is a table mapping, save table name and position of the end of the mapping, which is the beginning of the event
 		if [[ "$LINE" =~ .*"Table_map".* ]]; then
-			MAP_END_LOG_POS=`echo $MAP_LINE | cut -d \  -f 7`
+			MAP_END_LOG_POS=`echo $LINE | cut -d \  -f 7`
 			TABLE=`echo $LINE | cut -d \  -f 11`
+			continue
 		fi
 		#if line is STATEMENT END
-		if [[ "$LINE" =~ .*"STMT_END_F".* ]]; then
+		if [ -n "$TABLE" ] && [[ "$LINE" =~ .*"STMT_END_F".* ]]; then
 			STMT_END_LOG_POS=`echo $LINE | cut -d \  -f 7`
 			SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
 			Y="20${LINE:1:2}"
@@ -1895,10 +1934,11 @@ function list_one_binlog_events()
 			fi
 
 			SIZE_MB=`echo scale=2\; $SIZE / 1024 /1024 | bc -s`
-			printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB
+			printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB >>"$OUTPUT"
+			TABLE=
 		fi
-	done <$SQL
-	rm $SQL
+	done <$MARK_LIST
+	rm $MARK_LIST
 }
 
 function list_one_binlog_events_new()
