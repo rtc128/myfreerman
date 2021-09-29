@@ -1,5 +1,5 @@
 #!/bin/bash
-RELEASE=1.7.4
+RELEASE=1.7.5
 
 function analyze_gz_event_size()
 {
@@ -1882,7 +1882,21 @@ function list_one_binlog_events()
 	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
 	grep -Ew 'Table_map|STMT_END_F' $SQL >$MARK_LIST
 	TOTAL_LINES=`wc -l $MARK_LIST | cut -d \  -f 1`
-	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS))
+
+	#if thread count is greater than 50% of total lines, reduce it
+	HALF_LINES=`expr $TOTAL_LINES / 2`
+	if [ $THREADS -gt $HALF_LINES ]; then
+		THREADS=$HALF_LINES
+	fi
+
+	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS+1))
+
+	#if thread line count is odd, make it even
+	MOD=$(($THREAD_LINE_COUNT%2))
+	if [ $MOD -eq 1 ]; then
+		THREAD_LINE_COUNT=$((THREAD_LINE_COUNT+1))
+	fi
+
 	START_LINE=1
 	for I in `seq 1 $THREADS`; do
 		list_one_binlog_events_th "$MARK_LIST" $TOTAL_LINES $START_LINE $THREAD_LINE_COUNT "$OUTPUT" &
@@ -1901,8 +1915,12 @@ function list_one_binlog_events_th()
 	LINE_COUNT=$4
 	OUTPUT="$5"
 	
+	#if our first line is greater than total number of lines of the file, just ignore it
+	if [ $START_LINE -gt $TOTAL_LINES ]; then
+		return
+	fi
 	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
-	TAIL=$((TOTAL_LINES-START_LINE))
+	TAIL=$((TOTAL_LINES-START_LINE+1))
 	tail -n $TAIL "$INPUT" | head -n $LINE_COUNT >$MARK_LIST
 
 	#for each line
@@ -1934,7 +1952,7 @@ function list_one_binlog_events_th()
 			fi
 
 			SIZE_MB=`echo scale=2\; $SIZE / 1024 /1024 | bc -s`
-			printf "%-10s%-14s%-12s%-70s%-12s%-10s\n" $SEQ $DATE $TIME $TABLE $OP $SIZE_MB >>"$OUTPUT"
+			printf "%s %s %s %s %-80s %s\n" $SEQ $DATE $TIME $OP $TABLE $SIZE_MB >>"$OUTPUT"
 			TABLE=
 		fi
 	done <$MARK_LIST
