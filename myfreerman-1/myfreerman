@@ -1,46 +1,5 @@
 #!/bin/bash
-RELEASE=1.7.6
-
-function analyze_gz_event_size()
-{
-	BINLOG=`mktemp /tmp/binlog.XXXXXX`
-	analyze_binlog $BINLOG
-	RC=$?
-	rm $BINLOG
-	return $RC
-}
-
-function analyze_binlog_event_size()
-{
-	SQL=`mktemp /tmp/sql.XXXXXX`
-	analyze_sql $SQL
-	RC=$?
-	rm $SQL
-	return $RC
-}
-
-function analyze_sql_event_size()
-{
-	SQL=$1
-	FILE_LINES=`wc -l $SQL | cut -d \  -f 1`
-	START_BUFF=`mktemp /tmp/buff.XXXXXX`
-	grep -wn ^BINLOG $SQL | cut -d : -f 1 >$START_BUFF
-	for N in `cat $START_BUFF`; do
-		#position
-		POSITION=`head -n $N $SQL | tail -n 3 | head -n 1 | cut -d \  -f 3`
-		TAIL_LINES=$((FILE_LINES-N+1))
-		TAIL_BUFF=`mktemp /tmp/buff.XXXXXX`
-		tail -n $TAIL_LINES $SQL >$TAIL_BUFF
-		END_LINE=`grep -m 1 -n \\; $TAIL_BUFF | cut -d : -f 1`
-		CMD_BUFF=`mktemp /tmp/buff.XXXXXX`
-		head -n $END_LINE $TAIL_BUFF >$CMD_BUFF
-		rm $TAIL_BUFF
-		stat --printf=%s $CMD_BUFF
-		echo -e "\t$POSITION"
-		rm $CMD_BUFF
-	done
-	rm $START_BUFF
-}
+RELEASE=1.8.0
 
 function backup()
 {
@@ -303,9 +262,10 @@ function do_apply_binlog()
 function help_backup()
 {
 	echo "* Make backups"
-	echo "	backup binlog | full [ ... ]"
-	echo "  		binlog: backup binary logs"
-	echo "	  	full: backup full database"
+	echo "	backup binlog"
+	echo "  		backup binary logs"
+	echo "	backup full"
+	echo "	  	backup full database"
 }
 
 function help_backup_binlog()
@@ -318,13 +278,14 @@ function help_backup_full()
 {
 	echo "* Make full database backups"
 	echo "	backup full [ -d <dir> ]"
-	echo "		-d Save backup in <dir>, instead of directory set in configuration"
+	echo "		-d: Save backup in <dir>, instead of directory set in configuration"
 }
 
 function help_drop()
 {
 	echo "* Drop data from local server"
-	echo "   drop database: drop current database - datafiles, redo, undo, binary logs and relay logs"
+	echo "   drop database"
+	echo "      drop current database - datafiles, redo, undo, binary logs and relay logs"
 }
 
 function help_drop_database()
@@ -2211,27 +2172,6 @@ function query_binlog_backup_age()
 	echo $RESULT
 }
 
-function query_binlog_event_size()
-{
-	#if backup binlog dir doesn't exist, list empty
-	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
-		return
-	fi
-	LIST=`ls "$BINLOG_BACKUP_DIR"`
-	for F in $LIST; do
-#check if it is gzipped
-		if file "$F" | grep  "gzip compressed data" >/dev/null; then
-			analyze_gz_event_size $F
-			HANDLED_TYPE=1
-		fi
-#check if it is uncompressed binary log
-		if file "$F" | grep  "gzip compressed data" >/dev/null; then
-			analyze_binlog_event_size $F
-			HANDLED_TYPE=1
-		fi
-	done
-}
-
 function query_full_backup_age()
 {
 	cd "$BASE_BACKUP_DIR" || return 1
@@ -2474,6 +2414,147 @@ function apply_binlog()
 	mysql_stop
 }
 
+function recover()
+{
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_recover
+				return
+				;;
+			\?)
+				help_recover
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -lt 1 ]; then
+		help_recover
+		return 1
+	fi
+
+	CMD=$1
+	shift
+	case $CMD in
+		slave)
+			recover_slave $* || return 1;;
+		*)
+			help_recover; return 1;;
+	esac
+}
+
+function recover_slave()
+{
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_recover_slave
+				return
+				;;
+			\?)
+				help_recover_slave
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 1 ]; then
+		help_recover_slave
+		return 1
+	fi
+	BACKUP_DIR="$1"
+	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
+	#if binlog backup dir doesn't exist
+	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
+		write_out "No backup directory found"
+		return 1
+	fi
+
+	TARGET_CRED_OPT=`mount_target_credentials_opt`
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+
+	#identify next binlog and position
+	OUT=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" >$OUT 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	rm $ERR
+	[ $RC -eq 0 ] || { rm $OUT; return 1; }
+
+	#check if current error is the correct one
+	ERRNO=`grep -w Last_IO_Errno $OUT | awk '{ print $2; }'`
+	if [ $ERRNO -ne 13114 ]; then
+		write_out "Server does not seem to be in a state that needs recovery"
+		return
+	fi
+
+	#query binlog sequence
+	BINLOG=`grep -w Master_Log_File $OUT | awk '{ print $2; }'`
+	LONG_SEQ=`echo $BINLOG | cut -d . -f 2`
+	#query binlog position
+	POSITION=`grep -w Read_Master_Log_Pos $OUT | awk '{ print $2; }'`
+	rm $OUT
+
+	#disable read only for admins in target mysql
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "set global super_read_only=off" 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	[ $RC -eq 0 ] || { rm $ERR; return 1; }
+
+	#apply first binlog
+	SHORT_SEQ=`expr $LONG_SEQ + 0`
+	FILE_PATH="$BINLOG_BACKUP_DIR/$BINLOG.gz"
+	##it must exist
+	[ -f "$FILE_PATH" ] || { write_out "Cannot find backup of binary log #$SHORT_SEQ"; rm $ERR; return 1; }
+	write_out "Applying binary log #$SHORT_SEQ"
+	PLAIN=`mktemp /tmp/myfreerman.XXXXXX`
+	gunzip -c "$FILE_PATH" >$PLAIN 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	[ $RC -eq 0 ] || { rm $PLAIN $ERR; return 1; }
+
+	mysqlbinlog --start-position=$POSITION $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
+	RC=$?
+	rm $PLAIN
+	write_file_out $ERR
+	[ $RC -eq 0 ] || { rm $ERR; return 1; }
+
+	#apply next binlogs
+	FIRST_SEQ=$SHORT_SEQ
+	LIST=`ls "$BINLOG_BACKUP_DIR"`
+	for BINLOG in $LIST; do
+		LONG_SEQ=`echo $BINLOG | cut -d . -f 2`
+		SHORT_SEQ=`expr $LONG_SEQ + 0`
+		#apply only if sequence is greater than the first sequence
+		if [ $SHORT_SEQ -le $FIRST_SEQ ]; then
+			continue
+		fi
+		write_out "Applying binary log #$SHORT_SEQ"
+		FILE_PATH="$BINLOG_BACKUP_DIR/$BINLOG"
+		PLAIN=`mktemp /tmp/myfreerman.XXXXXX`
+		gunzip -c "$FILE_PATH" >$PLAIN 2>$ERR
+		RC=$?
+		write_file_out $ERR
+		[ $RC -eq 0 ] || { rm $PLAIN $ERR; return 1; }
+		mysqlbinlog $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
+		RC=$?
+		rm $PLAIN
+		write_file_out $ERR
+		[ $RC -eq 0 ] || { rm $ERR; return 1; }
+	done
+
+	#try to start slave
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "start slave" 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	[ $RC -eq 0 ] || { rm $ERR; return 1; }
+
+	rm $ERR
+}
+
 function remove_lock_file()
 {
 	if [ -n "$LOCK_FILE" ]; then
@@ -2537,6 +2618,20 @@ function remove_expired_full_backups()
 		fi
 		PREV_BKP=$BKP
 	done
+}
+
+function help_recover()
+{
+	echo "* Recover data"
+	echo "	recover slave"
+	echo "		Apply needed binary logs in slave, using master backup directory"
+}
+
+function help_recover_slave()
+{
+	echo "* Apply needed binary logs in slave, using master backup directory"
+	echo "	recover slave <dir>"
+	echo "		<dir>: master backup directory"
 }
 
 function help_remove()
@@ -3128,6 +3223,9 @@ function run()
 		query)
 			query $* || return 1
 			;;
+		recover)
+			recover $* || return 1
+			;;
 		remove)
 			remove $* || return 1
 			;;
@@ -3196,6 +3294,7 @@ function main_help()
 	echo "   y: assume YES for all questions"
 	echo "   h: print help for command"
 	echo "commands:"
+   echo "   apply"
    echo "   backup"
    echo "   list"
    echo "   init"
