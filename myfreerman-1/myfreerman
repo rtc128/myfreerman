@@ -2857,7 +2857,6 @@ function restore_database()
 		write_out "Cannot find readable file '$SERVER_CONFIG'"
 		return 1
 	fi
-	cd "$BACKUP_DIR" || return 1
 	if [ $USE_AUX_INSTANCE -eq 1 ]; then
 		backup_binlog || return 1
 		BINLOG_PREFIX=`mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show variables like 'log_bin_basename'" | tail -n 1 | cut -f 2 -d$'\t'` || return 1
