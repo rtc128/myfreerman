@@ -1,5 +1,7 @@
 #!/bin/bash
-RELEASE=1.8.1
+
+set -e
+RELEASE=1.8.2
 
 function backup()
 {
@@ -33,10 +35,13 @@ function backup()
 	fi
 
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
-	if ! mysqladmin -s --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null 2>&1; then
-		write_out "No MySQL server running - ignoring backup"
-		return
-	fi
+	ERR_LOG=`mktemp /tmp/myfreerman.XXXXXX`
+	mysqladmin --defaults-file="$SERVER_CONFIG" -s --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null 2>$ERR_LOG
+	RC=$?
+	write_file_out "$ERR_LOG"
+	rm "$ERR_LOG"
+	[ $RC -eq 0 ] || return 1
+
 	if ! which mysqlbackup >/dev/null 2>&1; then
 		write_out "Cannot find 'mysqlbackup' in PATH"
 		return 1
@@ -93,7 +98,7 @@ function backup_binlog()
 	#flush logs
 	write_out "Flushing binary logs"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-	mysqladmin --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs binary >"$BUFF" 2>&1
+	mysqladmin --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT flush-logs binary >"$BUFF" 2>&1
 	RC=$?
 	write_file_out "$BUFF"
 	rm "$BUFF"
@@ -123,7 +128,15 @@ function backup_binlog()
 			LONG_LOGSEQ=`echo $BINLOG | cut -d . -f 2`
 			LOGSEQ=`expr $LONG_LOGSEQ + 0`
 			write_out "Saving binary log #${LOGSEQ}"
-			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$BINLOG_BACKUP_DIR/${BINLOG}.gz" 2>$ERR_LOG
+			BKP="$BINLOG_BACKUP_DIR/${BINLOG}.gz"
+			TMP_OUT="${BKP}.tmp"
+			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$TMP_OUT" 2>$ERR_LOG
+			RC=$?
+			write_file_out $ERR_LOG
+			[ $RC -eq 0 ] || { rm $ERR_LOG; remove_lock_file; return 1; }
+
+			#rename tmp to final
+			mv "$TMP_OUT" "$BKP" 2>$ERR_LOG
 			RC=$?
 			write_file_out $ERR_LOG
 			[ $RC -eq 0 ] || { rm $ERR_LOG; remove_lock_file; return 1; }
@@ -180,7 +193,7 @@ function backup_full()
 
 	write_out "===== STARTING mysqlbackup ====="
 	if [ -n "$LOG_FILE" ]; then
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -190,7 +203,7 @@ function backup_full()
 			return 1
 		fi
 	else
-		mysqlbackup --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT backup-and-apply-log
 	fi
 	RETCODE=$?
 	write_out "===== FINISHED mysqlbackup ====="
@@ -210,20 +223,19 @@ function do_apply_binlog()
 	SOCKET="$1"
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
-		REQ_TIMESTAMP=`crudini --get "$WORKING_FILE" recovery requested_timestamp` 2>/dev/null
-		#if not filled, no restore was previously done
-		if [ -z "$REQ_TIMESTAMP" ]; then
+		VALIDATED=`crudini --get "$WORKING_FILE" recovery validated` 2>/dev/null
+		if [ "$VALIDATED" != "1" ]; then
 			write_out "No previous restore done -- aborting"
 			return 1
 		fi
+		REQ_TIMESTAMP_NO_SPACE=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
+		REQ_TIMESTAMP="${REQ_TIMESTAMP_NO_SPACE/_/ }"
 	fi
-	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
-	BASE_BACKUP=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
+	BASE_BACKUP=`find_base_backup "$REQ_TIMESTAMP"` || return 1
 	if  [ -z "$BASE_BACKUP" ]; then
 		write_out "No backup found"
 		return 1
 	fi
-	MY_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 
 	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
 	LOGSEQ=`get_base_backup_binlog_sequence $BASE_BACKUP`
@@ -238,7 +250,7 @@ function do_apply_binlog()
 		rm $TMP_SQL || return 1
 		touch $TMP_SQL || return 1
 		write_out "Applying binary log #${LOGSEQ}"
-		read_binlog $LOGSEQ $POSITION "$MY_REQ_TIMESTAMP" $TMP_SQL
+		read_binlog $LOGSEQ $POSITION "$REQ_TIMESTAMP" $TMP_SQL
 		ERR=$?
 		if [ $ERR -eq 0 ]; then
 			mysql $TARGET_CRED_OPT --socket="$SOCKET" <"$TMP_SQL"
@@ -257,9 +269,9 @@ function do_apply_binlog()
 		LOGSEQ=`expr $LOGSEQ + 1`
 		POSITION=0
 		FIRST=0
-		crudini --del "$WORKING_FILE" recovery restore_time
-		crudini --del "$WORKING_FILE" recovery requested_timestamp
-		crudini --del "$WORKING_FILE" recovery validated
+		crudini --del "$WORKING_FILE" recovery restore_time 2>/dev/null
+		crudini --del "$WORKING_FILE" recovery requested_timestamp 2>/dev/null
+		crudini --del "$WORKING_FILE" recovery validated 2>/dev/null
 	done
 	rm $TMP_SQL
 }
@@ -315,10 +327,10 @@ function help_init_database
 function help_apply()
 {
 	echo "* Apply binary logs"
-	echo "   apply binlogs"
+	echo "   apply binlog"
 }
 
-function help_apply_binlogs()
+function help_apply_binlog()
 {
 	echo "* Apply binary logs to a recently restored database"
 	echo "* This is used when binary logs could not be applied in RESTORE command, for example due to invalid credentials"
@@ -397,10 +409,9 @@ function binlog_backup_exists()
 	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
 		return 1
 	fi
-	cd "$BINLOG_BACKUP_DIR" || return 1
 	LOGSEQ=$1
 	LONG_LOGSEQ=`seq -f "%06g" $LOGSEQ $LOGSEQ`
-	BINLOG=binlog.${LONG_LOGSEQ}
+	BINLOG="$BINLOG_BACKUP_DIR/binlog.${LONG_LOGSEQ}"
 	if [ -f "${BINLOG}" ]; then
 		return 0
 	fi
@@ -994,18 +1005,22 @@ function find_aux_port()
 
 function find_base_backup()
 {
-	[ -d "$BASE_BACKUP_DIR" ] || return
-	REQ_TIMESTAMP=`date --date="$1" +%Y%m%d%H%M%S` || return 1
+	REQ_TIMESTAMP="$1"
+
+	#if not pitr, simply pick most recent
 	if [ -z "$REQ_TIMESTAMP" ]; then
-		return 1
+		ls "$BASE_BACKUP_DIR" | tail -n 1
+		return
 	fi
+
+	FMT_REQ_TIMESTAMP=`date --date="$1" +%Y%m%d%H%M%S` || return 1
 	for BKP in `ls -r "$BASE_BACKUP_DIR" | cut -d . -f 1`; do
 		DATE=${BKP:0:10}
 		TIME=${BKP:11:8}
 		TIME=${TIME//-/:}
 		BKP_FMT_TS="$DATE $TIME"
 		BKP_TIMESTAMP=`date --date="$BKP_FMT_TS" +%Y%m%d%H%M%S`
-		if [ $BKP_TIMESTAMP -le $REQ_TIMESTAMP ]; then
+		if [ $BKP_TIMESTAMP -le $FMT_REQ_TIMESTAMP ]; then
 			echo $BKP
 			return
 		fi
@@ -1089,7 +1104,7 @@ function get_binlog_transaction_timestamp()
 		gunzip -c $BINLOG >$PLAIN_BINLOG
 	fi
 	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysqlbinlog $PLAIN_BINLOG >$TMP_SQL || return 1
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" $PLAIN_BINLOG >$TMP_SQL || return 1
 	if [ -n "$TMP_BINLOG" ]; then
 		rm $TMP_BINLOG
 	fi
@@ -1127,7 +1142,7 @@ function get_current_slave_binlog()
 
 #before getting slave status, check if we can reach it
 		RESULT=1
-		if mysqladmin --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $CRED_OPT status >/dev/null; then
+		if mysqladmin --defaults-file="$SERVER_CONFIG" --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $CRED_OPT status >/dev/null; then
 			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
 			if [ $? -ne 0 ]; then
 				return $?
@@ -1569,7 +1584,7 @@ function init_slave()
 
 	#test auth with admin user (from config)
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
-	if ! mysqladmin -h $MASTER_HOST -P $MASTER_PORT $TARGET_CRED_OPT status >/dev/null; then
+	if ! mysqladmin --defaults-file="$SERVER_CONFIG" -h $MASTER_HOST -P $MASTER_PORT $TARGET_CRED_OPT status >/dev/null; then
 		write_out "Cannot connect to master server using credentials from configuration"
 		return 1
 	fi
@@ -1580,7 +1595,7 @@ function init_slave()
 	fi
 
 	#test auth with replication user
-	if ! mysqladmin -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USERNAME -p"${REPL_PASSWD}" status >/dev/null; then
+	if ! mysqladmin --defaults-file="$SERVER_CONFIG" -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USERNAME -p"${REPL_PASSWD}" status >/dev/null; then
 		return 1
 	fi
 
@@ -1606,7 +1621,7 @@ function init_slave()
 		mysql_stop
 		return 1
 	fi
-	sleep 5
+	sleep 10
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
 	mysql_stop
 }
@@ -1876,9 +1891,9 @@ function list_one_binlog_events()
 	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
 	if [ -n "$MIN_DATE" ]; then
 		#list only marks
-		mysqlbinlog --start-datetime="$MIN_DATE" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-datetime="$MIN_DATE" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
 	else
-		mysqlbinlog "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
 	fi
 
 	TOTAL_LINES=`wc -l $MARK_LIST | cut -d \  -f 1`
@@ -1979,7 +1994,7 @@ function list_one_binlog_events_new()
 	SEQ=${FULL_PATH:(-6)}
 	#create tmp file for sql
 	SQL=`mktemp /tmp/myfreerman.XXXXXX`
-	mysqlbinlog --start-datetime="$MIN_DATE" --result-file $SQL "$FULL_PATH" || return 1
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-datetime="$MIN_DATE" --result-file $SQL "$FULL_PATH" || return 1
 
 	#if last event in binlog is earlier than our min date, ignore this binlog and return specific code (100)
 	LAST_TS="`get_binlog_last_event_timestamp $SQL`"
@@ -2124,7 +2139,7 @@ function mysql_start()
 	sleep 3
 	COUNT=3
 	while [ $COUNT -lt $SERVER_START_TIMEOUT ]; do
-		if mysqladmin -s --socket="$SOCKET" ping >/dev/null; then
+		if mysqladmin --defaults-file="$SERVER_CONFIG" -s --socket="$SOCKET" ping >/dev/null; then
 			return 0
 		fi
 		if ! kill -0 $PID 2>/dev/null; then
@@ -2229,8 +2244,13 @@ function read_binlog()
 {
 	LOGSEQ=$1
 	POSITION=$2
-	STOP_DATETIME_OPT="--stop-datetime=$3"
+	REQ_TIMESTAMP="$3"
 	SQL_DEST=$4
+
+	#if pitr requested
+	if [ -n "$REQ_TIMESTAMP" ]; then
+		STOP_DATETIME_OPT="--stop-datetime=$REQ_TIMESTAMP"
+	fi
 	RECOVER_DB=
 	if [ $# -ge 5 ]; then
 		RECOVER_DB=$5
@@ -2251,7 +2271,11 @@ function read_binlog()
 	if [ -n "$RECOVER_DB" ]; then
 		DB_OPTION="--database=$RECOVER_DB"
 	fi
-	mysqlbinlog $DB_OPTION "$STOP_DATETIME_OPT" $POSITION_OPTION $PLAIN_BINLOG >>$SQL_DEST || return 1
+	if [ -n "$STOP_DATETIME_OPT" ]; then
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" $DB_OPTION "$STOP_DATETIME_OPT" $POSITION_OPTION $PLAIN_BINLOG >>$SQL_DEST || { [ -n "$TMP_BINLOG" ] && rm "$TMP_BINLOG"; return 1; }
+	else
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" $DB_OPTION $POSITION_OPTION $PLAIN_BINLOG >>$SQL_DEST || { [ -n "$TMP_BINLOG" ] && "$TMP_BINLOG"; return 1; }
+	fi
 	if [ -n "$TMP_BINLOG" ]; then
 		rm $TMP_BINLOG
 	fi
@@ -2415,18 +2439,18 @@ function apply_binlog()
 	while getopts "h" l_opt; do
 		case $l_opt in
 			h)
-				help_apply_binlogs
+				help_apply_binlog
 				return
 				;;
 			\?)
-				help_apply_binlogs
+				help_apply_binlog
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ $# -gt 0 ]; then
-		help_apply_binlogs
+		help_apply_binlog
 		return 1
 	fi
 
@@ -2438,17 +2462,21 @@ function apply_binlog()
 	USE_AUX_INSTANCE=0
 	CONFIG="$SERVER_CONFIG"
 
-	REQ_TIMESTAMP=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
-	#if not filled, no restore was previously done
-	if [ -z "$REQ_TIMESTAMP" ]; then
+	#if not validated, no restore was previously done
+	VAL=`crudini --get "$WORKING_FILE" recovery validated 2>/dev/null`
+	if [ "$VAL" != "1" ]; then
 		write_out "No previous restore done -- aborting"
 		return 1
 	fi
-	write_out "Requested timestamp: $REQ_TIMESTAMP"
+
+	REQ_TIMESTAMP=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
+	if [ -n "$REQ_TIMESTAMP" ]; then
+		ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
+		write_out "Requested timestamp: $ISO_REQ_TIMESTAMP"
+	fi
 	if ! confirm_operation; then
 		return
 	fi
-	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 	do_apply_binlog "$SERVER_SOCKET" || return 1
 	mysql_stop
 }
@@ -2513,7 +2541,7 @@ function recover_slave()
 	fi
 
 	#check if server is running
-	if ! mysqladmin --socket="$SERVER_SOCKET" ping >/dev/null 2>&1; then
+	if ! mysqladmin --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" ping >/dev/null 2>&1; then
 		write_out "Server is not running"
 		return 1
 	fi
@@ -2538,6 +2566,11 @@ function recover_slave()
 
 	#query binlog sequence
 	BINLOG=`grep -w Master_Log_File $OUT | awk '{ print $2; }'`
+#check if we really know binlog name
+	if [ -z "$BINLOG" ]; then
+		write_out "Unknown current binary log in master"
+		return 1
+	fi
 	LONG_SEQ=`echo $BINLOG | cut -d . -f 2`
 	#query binlog position
 	POSITION=`grep -w Read_Master_Log_Pos $OUT | awk '{ print $2; }'`
@@ -2561,7 +2594,7 @@ function recover_slave()
 	write_file_out $ERR
 	[ $RC -eq 0 ] || { rm $PLAIN $ERR; return 1; }
 
-	mysqlbinlog --start-position=$POSITION $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-position=$POSITION $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
 	RC=$?
 	rm $PLAIN
 	write_file_out $ERR
@@ -2584,7 +2617,7 @@ function recover_slave()
 		RC=$?
 		write_file_out $ERR
 		[ $RC -eq 0 ] || { rm $PLAIN $ERR; return 1; }
-		mysqlbinlog $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
+		mysqlbinlog --defaults-file="$SERVER_CONFIG"  $PLAIN | mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT 2>$ERR
 		RC=$?
 		rm $PLAIN
 		write_file_out $ERR
@@ -2766,13 +2799,12 @@ function restore_config()
 	fi
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	[ -d "$BASE_BACKUP_DIR" ] || { write_out "No backup found" && return 1; }
-	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
+	REQ_TIMESTAMP=
 	if [ -n "$USER_TIMESTAMP" ]; then
-		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
+		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP | sed -e 's/_/ /'` || return 1
 		write_out "Requested timestamp: $REQ_TIMESTAMP"
 	fi
-	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
-	DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
+	DIR=`find_base_backup "$REQ_TIMESTAMP"` || return 1
 	if  [ -z "$DIR" ]; then
 		write_out "No backup found"
 		return 1
@@ -2791,7 +2823,7 @@ function restore_database()
 	DORESET=1
 	PITR=0
 	RESTORE_TABLE_LIST=
-	REQ_TIMESTAMP=`date +%Y-%m-%d_%H:%M:%S`
+	REQ_TIMESTAMP=
 	CUR_SOCKET="$SERVER_SOCKET"
 	local OPTIND l_opt
 	while getopts "hno:s:p:t:" l_opt; do
@@ -2811,7 +2843,6 @@ function restore_database()
 				DORESET=0
 				;;
 			p)
-				PITR=1
 				USER_TIMESTAMP="${OPTARG}"
 				;;
 			t)
@@ -2832,20 +2863,27 @@ function restore_database()
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
 	restore_validate_options || return 1
-	if [ $PITR -eq 1 ]; then
-		REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP` || return 1
+
+	#check if there is at least one backup full
+	if ! [ -d "$BASE_BACKUP_DIR" ]; then
+		write_out "No backup found"
+		return 1
+	fi
+	COUNT=`ls "$BASE_BACKUP_DIR" | wc -l`
+	if [ $COUNT -eq 0 ]; then
+		write_out "No backup found"
+		return 1
+	fi
+
+	if [ -n "$USER_TIMESTAMP" ]; then
+		REQ_TIMESTAMP="`expand_timestamp $USER_TIMESTAMP | sed -e 's/_/ /'`" || return 1
 		write_out "Requested timestamp: $REQ_TIMESTAMP"
 	fi
 	if [ -n "$RESTORE_SCHEMA" -o -n "$RESTORE_TABLE_LIST" ]; then
 		USE_AUX_INSTANCE=1
 	fi
-	if ! crudini --set "$WORKING_FILE" recovery validated 1; then
-		write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
-		return 1
-	fi
 
-	ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
-	DIR=`find_base_backup "$ISO_REQ_TIMESTAMP"` || return 1
+	DIR=`find_base_backup "$REQ_TIMESTAMP"` || return 1
 	if [ -z "$DIR" ]; then
 		write_out "No backup found"
 		return 1
@@ -2953,15 +2991,23 @@ function restore_database()
 
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
 		TS=`date +%Y-%m-%d_%H-%M-%S`
-#save restore time
+		#save restore time
 		if ! crudini --set "$WORKING_FILE" recovery restore_time $TS; then
 			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
 			return 1
 		fi
-#save requested timestamp
-		if ! crudini --set "$WORKING_FILE" recovery requested_timestamp $REQ_TIMESTAMP; then
+		if ! crudini --set "$WORKING_FILE" recovery validated 1; then
 			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
 			return 1
+		fi
+		#save requested timestamp
+		crudini --del "$WORKING_FILE" recovery requested_timestamp 2>/dev/null
+		if [ -n "$REQ_TIMESTAMP" ]; then
+			REQ_TIMESTAMP_NO_SPACE=${REQ_TIMESTAMP/ /_}
+			if ! crudini --set "$WORKING_FILE" recovery requested_timestamp $REQ_TIMESTAMP_NO_SPACE; then
+				write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+				return 1
+			fi
 		fi
 	fi
 	SOCKET="$SERVER_SOCKET"
@@ -3049,7 +3095,7 @@ function restore_target_instance()
 {
 	DIR="${1}"
 	#if server is running, abort
-	if mysqladmin -s --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null; then
+	if mysqladmin --defaults-file="$SERVER_CONFIG" -s --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null; then
 		write_out "MySQL is running - aborting"
 		return 1
 	fi
@@ -3356,7 +3402,7 @@ function wait_server_start()
 	sleep 3
 	COUNT=3
 	while [ $COUNT -lt $SERVER_START_TIMEOUT ]; do
-		if mysqladmin -s --socket="$SOCKET" ping >/dev/null; then
+		if mysqladmin --defaults-file="$SERVER_CONFIG" -s --socket="$SOCKET" ping >/dev/null; then
 			return 0
 		fi
 		if ! kill -0 $PID 2>/dev/null; then

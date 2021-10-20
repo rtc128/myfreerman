@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.8.1
+Release:        1.8.2
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,6 +35,9 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Wed Oct 20 2021 Rodrigo Tassinari 1.8.2
+- In INIT SLAVE, apply all binlogs available at the end of restoration, and not only until the beginning of restoration
 
 * Mon Oct 04 2021 Rodrigo Tassinari 1.8.1
 - Binlog event listing: new filter options; use less disk space
