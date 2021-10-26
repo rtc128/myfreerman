@@ -1738,11 +1738,14 @@ function list_events()
 {
 	THREADS=1
 	MINUTES=
+	DETAILED=0
 	local OPTIND l_opt
-	while getopts "b:m:t:" l_opt; do
+	while getopts "b:dm:t:" l_opt; do
 		case $l_opt in
 			b)
 				BINLOG_FILE="$OPTARG";;
+			d)
+				DETAILED=1;;
 			m)
 				MINUTES=$OPTARG;;
 			t)
@@ -1875,6 +1878,59 @@ function list_one_binlog_decoded_prefix_line()
 }
 
 function list_one_binlog_events()
+{
+	FULL_PATH="$1"
+	MIN_DATE="$2"
+	OUTPUT="$3"
+
+	#if binlog does not exist, just ignore it because probably binlogs were flushed
+	if ! [ -f "$FULL_PATH" ]; then
+		return
+	fi
+
+	#sequence is the last 6 chars in binlog path
+	SEQ=${FULL_PATH:(-6)}
+
+	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	if [ -n "$MIN_DATE" ]; then
+		#list only marks
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-datetime="$MIN_DATE" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+	else
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+	fi
+
+	TOTAL_LINES=`wc -l $MARK_LIST | cut -d \  -f 1`
+	#if mark list is empty, inform we are already before min date
+	if [ $TOTAL_LINES -eq 0 ]; then
+		rm $MARK_LIST
+		return 100
+	fi
+
+	#if thread count is greater than 50% of total lines, reduce it
+	HALF_LINES=`expr $TOTAL_LINES / 2`
+	if [ $THREADS -gt $HALF_LINES ]; then
+		THREADS=$HALF_LINES
+	fi
+
+	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS+1))
+
+	#if thread line count is odd, make it even
+	MOD=$(($THREAD_LINE_COUNT%2))
+	if [ $MOD -eq 1 ]; then
+		THREAD_LINE_COUNT=$((THREAD_LINE_COUNT+1))
+	fi
+
+	START_LINE=1
+	for I in `seq 1 $THREADS`; do
+		list_one_binlog_events_th "$MARK_LIST" $TOTAL_LINES $START_LINE $THREAD_LINE_COUNT "$OUTPUT" &
+		START_LINE=$((START_LINE+THREAD_LINE_COUNT))
+	done
+	wait
+
+	rm $MARK_LIST
+}
+
+function list_one_binlog_events_detailed()
 {
 	FULL_PATH="$1"
 	MIN_DATE="$2"
