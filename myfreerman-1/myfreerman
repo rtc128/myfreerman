@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=1.8.2
+RELEASE=1.8.3
 
 function backup()
 {
@@ -1807,7 +1807,11 @@ function list_events()
 
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
 	if [ -n "$BINLOG_FILE" ]; then
-		list_one_binlog_events "$BINLOG_FILE" "" "$OUTPUT"
+		if [ $DETAILED -eq 1 ]; then
+			list_one_binlog_events_detailed "$BINLOG_FILE" "" "$OUTPUT"
+		else
+			list_one_binlog_events "$BINLOG_FILE" "" "$OUTPUT"
+		fi
 	else
 		list_local_events "$MIN_DATE" $OUTPUT
 		if [ $? -ne 100 ]; then
@@ -1944,43 +1948,75 @@ function list_one_binlog_events_detailed()
 	#sequence is the last 6 chars in binlog path
 	SEQ=${FULL_PATH:(-6)}
 
-	MARK_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	SQL=`mktemp /tmp/myfreerman.XXXXXX`
 	if [ -n "$MIN_DATE" ]; then
-		#list only marks
-		mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-datetime="$MIN_DATE" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" --start-datetime="$MIN_DATE" --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
 	else
-		mysqlbinlog --defaults-file="$SERVER_CONFIG" "$FULL_PATH" | grep -Ew 'Table_map|STMT_END_F' >$MARK_LIST
+		mysqlbinlog --defaults-file="$SERVER_CONFIG" --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
 	fi
+	SQL_LINE_COUNT=`wc -l $SQL | awk '{ print $1; }'`
 
-	TOTAL_LINES=`wc -l $MARK_LIST | cut -d \  -f 1`
-	#if mark list is empty, inform we are already before min date
+	START_CMD_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	grep -wn ^BINLOG $SQL | cut -d : -f 1 >$START_CMD_LIST
+
+	TOTAL_LINES=`wc -l $START_CMD_LIST | cut -d \  -f 1`
+	#if start list is empty, inform we are already before min date
 	if [ $TOTAL_LINES -eq 0 ]; then
 		rm $MARK_LIST
 		return 100
 	fi
 
-	#if thread count is greater than 50% of total lines, reduce it
-	HALF_LINES=`expr $TOTAL_LINES / 2`
-	if [ $THREADS -gt $HALF_LINES ]; then
-		THREADS=$HALF_LINES
+	if [ $THREADS -gt $TOTAL_LINES ]; then
+		THREADS=$TOTAL_LINES
 	fi
 
-	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS+1))
-
-	#if thread line count is odd, make it even
-	MOD=$(($THREAD_LINE_COUNT%2))
-	if [ $MOD -eq 1 ]; then
+	THREAD_LINE_COUNT=$((TOTAL_LINES/THREADS))
+	#if there's gonna be ramining lines in the end, add one
+	MOD=$((TOTAL_LINES%THREADS))
+	if [ $MOD -ne 0 ]; then
 		THREAD_LINE_COUNT=$((THREAD_LINE_COUNT+1))
 	fi
 
 	START_LINE=1
 	for I in `seq 1 $THREADS`; do
-		list_one_binlog_events_th "$MARK_LIST" $TOTAL_LINES $START_LINE $THREAD_LINE_COUNT "$OUTPUT" &
+		LOCAL_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+		HEAD=$((START_LINE+THREAD_LINE_COUNT-1))
+		TAIL=$THREAD_LINE_COUNT
+		head -n $HEAD $START_CMD_LIST | tail -n $TAIL >$LOCAL_LIST
+		list_one_binlog_events_detailed_th $SQL $SQL_LINE_COUNT $LOCAL_LIST "$OUTPUT" &
 		START_LINE=$((START_LINE+THREAD_LINE_COUNT))
 	done
 	wait
 
-	rm $MARK_LIST
+	rm $SQL $START_CMD_LIST
+}
+
+function list_one_binlog_events_detailed_th()
+{
+	SQL=$1
+	SQL_TOTAL_LINES=$2
+	LOCAL_LIST=$3
+	OUTPUT="$4"
+
+	for LINE in `cat "$LOCAL_LIST"`; do
+		TAIL=$((SQL_TOTAL_LINES-LINE+1))
+		FULL_CMD=`mktemp /tmp/myfreerman.XXXXXX`
+		HEAD=`tail -n $TAIL $SQL | grep -n -m 1 '\;' | cut -d : -f 1`
+		tail -n $TAIL $SQL | head -n $HEAD >$FULL_CMD
+		SIZE=`stat --format=%s $FULL_CMD`
+		#remove LF
+		SIZE=$((SIZE-1))
+		rm $FULL_CMD
+		if [ $SIZE -lt 500 ]; then
+			continue
+		fi
+		if [ "$RMAN_USE_BYTES" == "1" ]; then
+			echo $SIZE
+		else
+			echo scale=1\; $SIZE / 1024 / 1024 | bc -s | sed -e 's/^\./0\./'
+		fi
+	done
+	rm $LOCAL_LIST
 }
 
 function list_one_binlog_events_th()
@@ -2010,12 +2046,19 @@ function list_one_binlog_events_th()
 		#if line is STATEMENT END
 		if [ -n "$TABLE" ] && [[ "$LINE" =~ .*"STMT_END_F".* ]]; then
 			STMT_END_LOG_POS=`echo $LINE | cut -d \  -f 7`
-			SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
+			ENC_SIZE=$((STMT_END_LOG_POS-MAP_END_LOG_POS))
+			SIZE=`scale=0; echo $ENC_SIZE \* 1.4 | bc -s`
+
 			Y="20${LINE:1:2}"
 			M="${LINE:3:2}"
 			D="${LINE:5:2}"
 			DATE="$Y-$M-$D"
 			TIME="${LINE:8:8}"
+			#if hour has only one digit, prepend '0'
+			FIRST_DIGIT="${TIME:1:1}"
+			if [ "$FIRST_DIGIT" == " " ]; then
+				TIME="0${TIME:2:7}"
+			fi
 
 			#operation
 			RAW_OP=`echo $LINE | cut -d \  -f 10`
@@ -2027,8 +2070,12 @@ function list_one_binlog_events_th()
 				OP="INSERT"
 			fi
 
-			SIZE_MB=`echo scale=2\; $SIZE / 1024 /1024 | bc -s | sed -e 's/^\./0\./'`
-			printf "%s %s %s %s %-80s %s\n" $SEQ $DATE $TIME $OP $TABLE $SIZE_MB >>"$OUTPUT"
+			SIZE_MB=`echo scale=1\; $SIZE / 1024 / 1024 | bc -s | sed -e 's/^\./0\./'`
+			if [ "$RMAN_USE_BYTES" == "1" ]; then
+				printf "%s %s %s %s %-80s %s\n" $SEQ $DATE $TIME $OP $TABLE $SIZE >>"$OUTPUT"
+			else
+				printf "%s %s %s %s %-80s %s\n" $SEQ $DATE $TIME $OP $TABLE $SIZE_MB >>"$OUTPUT"
+			fi
 			TABLE=
 		fi
 	done <$MARK_LIST
