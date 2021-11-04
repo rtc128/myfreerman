@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=1.8.4
+RELEASE=1.8.5
 
 function backup()
 {
@@ -221,6 +221,7 @@ function backup_full()
 function do_apply_binlog()
 {
 	SOCKET="$1"
+	BASE_BACKUP="$2"
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
 		VALIDATED=`crudini --get "$WORKING_FILE" recovery validated` 2>/dev/null
@@ -230,9 +231,13 @@ function do_apply_binlog()
 		fi
 		REQ_TIMESTAMP_NO_SPACE=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
 		REQ_TIMESTAMP="${REQ_TIMESTAMP_NO_SPACE/_/ }"
+		BASE_BACKUP=`crudini --get "$WORKING_FILE" recovery base_backup 2>/dev/null`
+		if [ -z "$BASE_BACKUP" ]; then
+			write_out "Cannot find base backup in working file!!!"
+			return 1
+		fi
 	fi
-	BASE_BACKUP=`find_base_backup "$REQ_TIMESTAMP"` || return 1
-	if  [ -z "$BASE_BACKUP" ]; then
+	if [ -z "$BASE_BACKUP" ]; then
 		write_out "No backup found"
 		return 1
 	fi
@@ -271,6 +276,7 @@ function do_apply_binlog()
 		LOGSEQ=`expr $LOGSEQ + 1`
 		POSITION=0
 		FIRST=0
+		crudini --del "$WORKING_FILE" recovery base_backup 2>/dev/null
 		crudini --del "$WORKING_FILE" recovery restore_time 2>/dev/null
 		crudini --del "$WORKING_FILE" recovery requested_timestamp 2>/dev/null
 		crudini --del "$WORKING_FILE" recovery validated 2>/dev/null
@@ -2066,9 +2072,9 @@ function list_one_binlog_events_th()
 			DATE="$Y-$M-$D"
 			TIME="${LINE:8:8}"
 			#if hour has only one digit, prepend '0'
-			FIRST_DIGIT="${TIME:1:1}"
+			FIRST_DIGIT="${TIME:0:1}"
 			if [ "$FIRST_DIGIT" == " " ]; then
-				TIME="0${TIME:2:7}"
+				TIME="0${TIME:1:7}"
 			fi
 
 			#operation
@@ -3002,6 +3008,7 @@ function restore_database()
 		write_out "No backup found"
 		return 1
 	fi
+	BASE_BACKUP=$DIR
 	if ! confirm_operation; then
 		return 1
 	fi
@@ -3123,6 +3130,11 @@ function restore_database()
 				return 1
 			fi
 		fi
+		#save base backup
+		if ! crudini --set "$WORKING_FILE" recovery base_backup $BASE_BACKUP; then
+			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+			return 1
+		fi
 	fi
 	SOCKET="$SERVER_SOCKET"
 	ITYPE="restricted"
@@ -3131,7 +3143,7 @@ function restore_database()
 		LOG_ERROR="$AUX_LOG_ERROR"
 		SOCKET="$AUX_SOCKET"
 	fi
-	do_apply_binlog "$SOCKET" || return 1
+	do_apply_binlog "$SOCKET" $BASE_BACKUP || return 1
 	if [ -n "$RESTORE_SCHEMA_OLD_NAME" ]; then
 		copy_recovered_db || { mysql_stop && return 1; }
 	fi

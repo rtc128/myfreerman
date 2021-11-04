@@ -1,12 +1,12 @@
 Name:           myfreerman
 Version:        1
-Release:        1.8.4
+Release:        1.8.5
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
-License:			GPL
-Source0:			myfreerman-1.tar.gz
-Requires:		crudini >= 0.3
+License:			 GPL
+Source0:			 myfreerman-1.tar.gz
+Requires:		 crudini >= 0.3, bc
 
 %description
 MyFreeRMan uses MEB to create/restore backups of MySQL databases.
@@ -35,6 +35,10 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Thu Nov 4 2021 Rodrigo Tassinari 1.8.5
+- Fix in recovery: if there is a new full backup when binlog applying is started, wrong binlog reference was being picked
+- Minor fix in event listing
 
 * Wed Oct 27 2021 Rodrigo Tassinari 1.8.4
 - Better accuracy in binlog event size calculation
