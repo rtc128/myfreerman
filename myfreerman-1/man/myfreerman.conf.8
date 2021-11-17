@@ -26,6 +26,9 @@ db_password: Database password - optional - mysql_config_editor can be used.
 
 db_username: Database username - optional - mysql_config_editor can be used.
 
+disable_buffer_pool_dump: 1 to disable innodb buffer pool dump in full backups; 0 to keet ip enabled.
+   DEFAULT: 0.
+
 log_dir: log directory. Required when option -l is used.
 
 lock_file: Lock file path. Lock file is used to block simultaneous instances running.

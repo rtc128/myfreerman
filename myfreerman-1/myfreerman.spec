@@ -1,6 +1,6 @@
 Name:           myfreerman
 Version:        1
-Release:        1.8.5
+Release:        1.8.6
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
@@ -35,6 +35,10 @@ install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
 /usr/share/man/man8/myfreerman.conf.8.gz
 
 %changelog
+
+* Wed Nov 17 2021 Rodrigo Tassinari 1.8.6
+- New config parameter: disable_buffer_pool_dump
+- Minor fix in config validation
 
 * Thu Nov 4 2021 Rodrigo Tassinari 1.8.5
 - Fix in recovery: if there is a new full backup when binlog applying is started, wrong binlog reference was being picked
