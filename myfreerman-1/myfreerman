@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=1.8.6
+RELEASE=1.8.7
 
 function backup()
 {
@@ -195,7 +195,7 @@ function backup_full()
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
-		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT backup-and-apply-log >$TMP_LOG 2>&1 
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup-and-apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -206,7 +206,7 @@ function backup_full()
 		fi
 	else
 		write_out "===== STARTING MEB ====="
-		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT backup-and-apply-log
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup-and-apply-log
 	fi
 	RETCODE=$?
 	#check_backup_consistency
@@ -2260,7 +2260,7 @@ function mysql_start()
 {
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off --disable-log-bin"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
 	PID=$!
@@ -3216,7 +3216,14 @@ function restore_aux_instance()
 #Binary log index informed in --log-bin-index is appended a text ".index", and manual does not say that
 #So, we rename it
 	BUG_BINLOG_INDEX="${AUX_BINLOG_INDEX}.index" 
-	mv "$BUG_BINLOG_INDEX" "$AUX_BINLOG_INDEX" || return 1
+	if [ -f "$BUG_BINLOG_INDEX" ]; then
+		ERR_LOG=`mktemp /tmp/myfreerman.XXXXXX`
+		mv "$BUG_BINLOG_INDEX" "$AUX_BINLOG_INDEX"
+		RC=$?
+		write_file_out "$ERR_LOG"
+		rm "$ERR_LOG"
+		[ $RC -eq 0 ] || return 1
+	fi
 #===========================================
 
 	#create log file
@@ -3308,7 +3315,14 @@ function restore_target_instance()
 #So, we rename it
 	if [ -n "$BINLOG_INDEX" ]; then
 		BUG_BINLOG_INDEX="${BINLOG_INDEX}.index" 
-		mv "$BUG_BINLOG_INDEX" "$BINLOG_INDEX" || return 1
+		if [ -f "$BUG_BINLOG_INDEX" ]; then
+			ERR_LOG=`mktemp /tmp/myfreerman.XXXXXX`
+			mv "$BUG_BINLOG_INDEX" "$BINLOG_INDEX"
+			RC=$?
+			write_file_out "$ERR_LOG"
+			rm "$ERR_LOG"
+			[ $RC -eq 0 ] || return 1
+		fi
 #===========================================
 	fi
 	if [ -n "$MYSQLD_USER" ]; then
@@ -3320,7 +3334,7 @@ function restore_target_instance()
 		if [ -n "$UNDODIR" ]; then
 			chown -R $MYSQLD_USER "$UNDODIR" || return 1
 		fi
-		if [ -n "$BINLOG_INDEX" -a -n "$MYSQLD_USER" ]; then
+		if [ -n "$BINLOG_INDEX" -a -n "$MYSQLD_USER" -a -f "$BINLOG_INDEX" ]; then
 			chown $MYSQLD_USER "$BINLOG_INDEX" || return 1
 		fi
 		if [ -n "$BINLOG_DIR" -a -n "$MYSQLD_USER" ]; then
