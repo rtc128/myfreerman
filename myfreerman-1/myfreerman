@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=1.8.7
+RELEASE=1.8.8
 
 function backup()
 {
@@ -1642,10 +1642,7 @@ function init_slave()
 		mysql_stop || return 1
 		return 1
 	fi
-	if ! mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "start slave"; then
-		mysql_stop
-		return 1
-	fi
+	start_slave || { mysql_stop; return 1; }
 	sleep 10
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
 	mysql_stop
@@ -2224,17 +2221,37 @@ function mount_limit_memory_option()
 	fi
 }
 
-function old_mount_slave_credentials_opt()
+function mount_reset_slave_command()
 {
-	RESULT=
-	RESULT="--host=$SLAVE_HOSTNAME --port=$SLAVE_PORT"
-	if [ -n "$DB_USERNAME" ]; then
-		RESULT="$RESULT --user=$DB_USERNAME"
-	fi
-	if [ -n "$DB_PASSWORD" ]; then
-		RESULT="$RESULT --password=$DB_PASSWORD"
-	fi
-	echo -n "$RESULT"
+	ALIAS=`mount_slave_command_alias` || return 1
+	echo "reset $ALIAS"
+}
+
+function mount_slave_command_alias()
+{
+	VERSION_LINE=`mysqld -V` || return 1
+	FULL_VER=`echo $VERSION_LINE | awk '{ print $3; }'`
+	ONLY_NUM=`echo $FULL_VER | cut -d - -f 1`
+	MAJOR=`echo $ONLY_NUM | cut -d . -f 1`
+	MINOR=`echo $ONLY_NUM | cut -d . -f 2`
+	PATCH=`echo $ONLY_NUM | cut -d . -f 3`
+
+	[ $MAJOR -ge 8 ] || { echo "slave"; return; }
+	[ $MINOR -eq 0 ] || { echo "replica"; return; }
+	[ $PATCH -ge 26 ] || { echo "slave"; return; }
+	echo "replica"
+}
+
+function mount_start_slave_command()
+{
+	ALIAS=`mount_slave_command_alias` || return 1
+	echo "start $ALIAS"
+}
+
+function mount_stop_slave_command()
+{
+	ALIAS=`mount_slave_command_alias` || return 1
+	echo "stop $ALIAS"
 }
 
 function mount_target_credentials_opt()
@@ -2717,6 +2734,9 @@ function recover_slave()
 	write_file_out $ERR
 	[ $RC -eq 0 ] || { rm $ERR; return 1; }
 
+	stop_slave || { rm $ERR; return 1; }
+	reset_slave || { rm $ERR; return 1; }
+
 	#apply first binlog
 	SHORT_SEQ=`expr $LONG_SEQ + 0`
 	FILE_PATH="$BINLOG_BACKUP_DIR/$BINLOG.gz"
@@ -2758,13 +2778,7 @@ function recover_slave()
 		write_file_out $ERR
 		[ $RC -eq 0 ] || { rm $ERR; return 1; }
 	done
-
-	#try to start slave
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "start slave" 2>$ERR
-	RC=$?
-	write_file_out $ERR
-	[ $RC -eq 0 ] || { rm $ERR; return 1; }
-
+	start_slave
 	rm $ERR
 }
 
@@ -3510,10 +3524,47 @@ function remove()
 	esac
 }
 
+function reset_slave()
+{
+	CMD=`mount_reset_slave_command`
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	rm $ERR
+	[ $RC -eq 0 ] || return 1
+}
+
 function save_recovery_data()
 {
 	crudini --set "$WORKING_FILE" recovery restore_time "$REQ_TIMESTAMP"
 }
+
+function start_slave()
+{
+	CMD=`mount_start_slave_command`
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	rm $ERR
+	[ $RC -eq 0 ] || return 1
+}
+
+function stop_slave()
+{
+	CMD=`mount_stop_slave_command`
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	rm $ERR
+	[ $RC -eq 0 ] || return 1
+}
+
 
 function uncompress_backup()
 {
