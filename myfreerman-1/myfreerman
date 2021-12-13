@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=1.8.8
+RELEASE=1.8.9
 
 function backup()
 {
@@ -113,6 +113,8 @@ function backup_binlog()
 	fi
 
 	check_lock_file || return 1
+	crosscheck_binlogs || return 1
+
 	#list binlogs, just ignoring the last one
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
@@ -144,6 +146,7 @@ function backup_binlog()
 	done
 	rm $ERR_LOG
 	check_purge_binlogs $LAST_BINLOG || { remove_lock_file && return 1; }
+	remove_tmp_binlog_backups
 	remove_lock_file
 }
 
@@ -905,6 +908,25 @@ function create_incarnation()
 	rm $ERR_LOG
 }
 
+function crosscheck_binlogs()
+{
+	write_out "Crosschecking binary logs"
+	CUR_SEQ=`get_current_binlog_sequence` || return 1
+
+	#each sequence in backup that is higher =>remove
+	LIST=`ls "$BINLOG_BACKUP_DIR" 2>/dev/null`
+	[ -n "$LIST" ] || return
+	for F in $LIST; do
+		LONG_SEQ=`echo $F | cut -d . -f 2`
+		[ -n "$LONG_SEQ" ] || continue
+		if [ $LONG_SEQ -gt $CUR_SEQ ]; then
+			SHORT_SEQ=`expr $LONG_SEQ + 0`
+			write_out "   Removing obsolete backup of binary log #${SHORT_SEQ}"
+			rm "$BINLOG_BACKUP_DIR"/$F 2>/dev/null
+		fi
+	done
+}
+
 function drop_target_database()
 {
 	if [ -n "$REDODIR" ]; then
@@ -1151,6 +1173,20 @@ function get_oldest_full_backup()
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	cd "$BASE_BACKUP_DIR" || return 1
 	ls | head -n 1
+}
+
+function get_current_binlog_sequence()
+{
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e 'show master status\G' >$BUFF 2>$ERR
+	RC=$?
+	write_file_out $ERR
+	rm $ERR
+	[ $RC -eq 0 ] || { rm $BUFF; return 1; }
+	LONG_SEQ=`grep -wi file $BUFF | awk '{ print $2; }' | cut -d . -f 2`
+	rm $BUFF
+	expr $LONG_SEQ + 0
 }
 
 function get_current_slave_binlog()
@@ -2782,13 +2818,6 @@ function recover_slave()
 	rm $ERR
 }
 
-function remove_lock_file()
-{
-	if [ -n "$LOCK_FILE" ]; then
-		rm -f "$LOCK_FILE"
-	fi
-}
-
 function remove_expired_backups()
 {
 	if ! confirm_operation; then
@@ -2845,6 +2874,23 @@ function remove_expired_full_backups()
 		fi
 		PREV_BKP=$BKP
 	done
+}
+
+function remove_lock_file()
+{
+	if [ -n "$LOCK_FILE" ]; then
+		rm -f "$LOCK_FILE"
+	fi
+}
+
+function remove_tmp_binlog_backups()
+{
+	COUNT=`ls "$BINLOG_BACKUP_DIR"/*.tmp 2>/dev/null | wc -l`
+	[ $COUNT -ne 0 ] || return
+	ERR=`mktemp /tmp/myfreerman.XXXXXX`
+	rm -f "$BINLOG_BACKUP_DIR"/*.tmp
+	write_file_out $ERR
+	rm $ERR
 }
 
 function help_recover()
