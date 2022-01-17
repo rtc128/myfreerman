@@ -915,7 +915,7 @@ function crosscheck_binlogs()
 
 	#each sequence in backup that is higher =>remove
 	LIST=`ls "$BINLOG_BACKUP_DIR" 2>/dev/null`
-	[ -n "$LIST" ] || return
+	[ -n "$LIST" ] || return 0
 	for F in $LIST; do
 		LONG_SEQ=`echo $F | cut -d . -f 2`
 		[ -n "$LONG_SEQ" ] || continue
@@ -1082,6 +1082,41 @@ function fix_backup_timestamp()
 	if [ "$OLD_NAME" != "$NEW_NAME" ]; then
 		mv "${BASE_BACKUP_DIR}/${OLD_NAME}" "${BASE_BACKUP_DIR}/${NEW_NAME}" || return 1
 	fi
+}
+
+function flashback()
+{
+	CMD=$1
+	shift
+	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
+	case $CMD in
+		table)
+			flashback_table $* || return 1
+			;;
+		*)
+			echo "Invalid flashback command: $CMD" >&2
+			return 1
+			;;
+	esac
+
+}
+
+function flashback_table()
+{
+	if [ $# -ne 2 ]; then
+		echo "flashback table <table name> <timestamp>" >&2
+		return  
+	fi
+	FQ_TABLE_NAME=$1
+	DATABASE=`echo $FQ_TABLE_NAME | cut -d . -f 1`
+	TABLE_NAME=`echo $FQ_TABLE_NAME | cut -d . -f 2`
+	USER_TIMESTAMP=$2
+	REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP | sed -e 's/_/ /'` || return 1
+	write_out "Requested timestamp: $REQ_TIMESTAMP"
+	#confirm_operation
+	MOD_SH="$RMAN_MOD_DIR/flashback.sh"
+	source "$MOD_SH"
+	return $?
 }
 
 function get_base_backup_binlog_name()
@@ -3512,6 +3547,9 @@ function run()
 			;;
 		drop)
 			drop $* || return 1
+			;;
+		flashback)
+			flashback $* || return 1
 			;;
 		init)
 			init $* || return 1
