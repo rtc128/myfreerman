@@ -58,12 +58,25 @@ function parse_one_row_val()
 	CONTENT="`head -n $TLINE $EVENT | tail -n 1`"
 	#find position of the comment in the end of the line
 	POS=`echo "$CONTENT" | grep -bo -m 1 '/\*.*\*/$' | cut -d : -f 1`
+	#get the comment
+	COMMENT=${CONTENT:$POS}
+#get data type: first workd inside the comment
+	DATATYPE=`echo "$COMMENT" | cut -d \  -f 2`
+	BASIC_TYPE=`echo $DATATYPE | cut -d \( -f 1`
+
 	#remove space right before comment
 	POS=$((POS-1))
 	#cut in this comment
 	NC_CONTENT=${CONTENT:0:$POS}
 	#cut value
-	echo "$NC_CONTENT" | cut -d = -f 2-
+	VAL=`echo "$NC_CONTENT" | cut -d = -f 2-`
+
+	#handle specidic datatypes
+	case $BASIC_TYPE in
+		TIMESTAMP)
+			VAL="from_unixtime($VAL)";;
+	esac
+	echo "$VAL"
 }
 
 function read_binlogs()
