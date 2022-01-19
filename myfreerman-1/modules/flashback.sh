@@ -13,11 +13,13 @@ function check_no_blob()
 function exec_sqls()
 {
 	write_out "Running flashback script"
-	for F in `ls -R $SQL_DIR`; do
+	for F in `ls -r $SQL_DIR`; do
 		FF=$SQL_DIR/$F
 		CMD="`cat $FF`"
 		echo "$CMD;" >&5 || return 1
 	done
+	CMD="commit;"
+	echo "$CMD" >&5 || return 1
 }
 
 function get_first_binlog()
@@ -45,7 +47,9 @@ function list_table_cols()
 
 function lock()
 {
-	exec 5> >(mysql  --socket="$SERVER_SOCKET")
+	exec 5> >(mysql --socket="$SERVER_SOCKET")
+	CMD="start transaction;"
+	echo "$CMD" >&5 || return 1
 	CMD="lock tables $FQ_TABLE_NAME write;"
 	echo "$CMD" >&5 || return 1
 }
@@ -53,10 +57,14 @@ function lock()
 function parse_one_event()
 {
 	TAIL=$((LINE_COUNT-START_LINE-3))
+	#look for statement end mark
+	EFF_START_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^#.*STMT_END_F$' | cut -d : -f 1`
+	EFF_START_LINE=$((EFF_START_LINE+START_LINE+2))
+	TAIL=$((LINE_COUNT-EFF_START_LINE-1))
 	TMP_END_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^# at ' | cut -d : -f 1`
-	END_LINE=$((TMP_END_LINE+START_LINE+2))
+	END_LINE=$((TMP_END_LINE+EFF_START_LINE))
 	HEAD=$END_LINE
-	TAIL=$((END_LINE-START_LINE-2))
+	TAIL=$((END_LINE-EFF_START_LINE-1))
 	head -n $HEAD $SQL | tail -n $TAIL >$EVENT
 }
 
@@ -124,6 +132,7 @@ function read_one_binlog()
 	FERR=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	SQL=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	mysqlbinlog --defaults-file="$SERVER_CONFIG" -vvv --base64-output=DECODE-ROWS --database=$DATABASE --result-file=$SQL --start-datetime="$REQ_TIMESTAMP" $PLAIN 2>$ERR
+	cp $SQL /tmp/binlog.sql
 	RC=$?
 	rm $PLAIN
 	grep -vwi warning $ERR >$FERR
@@ -131,7 +140,7 @@ function read_one_binlog()
 	write_file_out $FERR
 	rm $FERR
 	[ $RC -eq 0 ] || { rm $SQL; return 1; }
-	revert_sql_cmds
+	revert_sql_cmds || { rm $SQL; return 1; }
 	rm $SQL
 }
 
@@ -203,13 +212,12 @@ function revert_update()
 
 function revert_sql_cmds()
 {
-#look for table map with required table
+	#look for table map with required table
 	STR="table_map: \`$DATABASE\`\.\`$TABLE_NAME\`"
 	LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	grep -ni "$STR" $SQL | cut -d : -f 1 >$LINE_LIST
 	LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
 	for START_LINE in `cat $LINE_LIST`; do
-		cp $SQL /tmp/binlog.sql
 		EVENT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		parse_one_event || return 1
 		OP=`head -n 1 $EVENT | cut -d \  -f 2`
@@ -244,7 +252,6 @@ function run()
 	RC=$?
 	rm $COL_FILE
 	rm -fr $SQL_DIR
-	exec 5>-
 	return $RC
 }
 
