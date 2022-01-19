@@ -12,6 +12,7 @@ function check_no_blob()
 
 function exec_sqls()
 {
+	write_out "Running flashback script"
 	for F in `ls -R $SQL_DIR`; do
 		FF=$SQL_DIR/$F
 		CMD="`cat $FF`"
@@ -40,12 +41,11 @@ function get_first_binlog()
 function list_table_cols()
 {
 	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
-	cat $COL_FILE
 }
 
 function lock()
 {
-	exec 5> >(mysql -vvv --socket="$SERVER_SOCKET")
+	exec 5> >(mysql  --socket="$SERVER_SOCKET")
 	CMD="lock tables $FQ_TABLE_NAME write;"
 	echo "$CMD" >&5 || return 1
 }
@@ -58,7 +58,6 @@ function parse_one_event()
 	HEAD=$END_LINE
 	TAIL=$((END_LINE-START_LINE-2))
 	head -n $HEAD $SQL | tail -n $TAIL >$EVENT
-	#cat $EVENT
 }
 
 function parse_one_row_val()
@@ -160,8 +159,7 @@ function revert_insert()
 
 function revert_update()
 {
-	CMD="update $FQ_TABLE_NAME set "
-	TMP_COL_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+	EVENT_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
 	for I in `seq 1 $COL_COUNT`; do
 		COL_NAME=`head -n $I $COL_FILE | tail -n 1`
 		NAME_LIST="${NAME_LIST}${COL_NAME}"
@@ -170,66 +168,37 @@ function revert_update()
 		fi
 	done
 
-	#mount WHERE
 	START_LINE=3
-	for LINE in `seq 1 $COL_COUNT`; do
-		VAL=`parse_one_row_val`
-		WHERE_LIST="${WHERE_LIST}${VAL}"
-		if [ $LINE -lt $COL_COUNT ]; then
-			WHERE_LIST="${WHERE_LIST}, "
-		fi
+	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
+		CMD="update $FQ_TABLE_NAME set"
+		SET_LIST=
+		#mount SET
+		for LINE in `seq 1 $COL_COUNT`; do
+			COL_NAME=`head -n $LINE $COL_FILE | tail -n 1`
+			VAL=`parse_one_row_val`
+			SET_COL="$COL_NAME = $VAL"
+			SET_LIST="${SET_LIST}${SET_COL}"
+			if [ $LINE -lt $COL_COUNT ]; then
+				SET_LIST="${SET_LIST}, "
+			fi
+		done
+
+		#mount WHERE
+		START_LINE=$((START_LINE+1+COL_COUNT))
+		WHERE_LIST=
+		for LINE in `seq 1 $COL_COUNT`; do
+			VAL=`parse_one_row_val`
+			WHERE_LIST="${WHERE_LIST}${VAL}"
+			if [ $LINE -lt $COL_COUNT ]; then
+				WHERE_LIST="${WHERE_LIST}, "
+			fi
+		done
+
+		CMD="$CMD $SET_LIST where ($NAME_LIST) = ($WHERE_LIST)"
+		write_sql
+
+		START_LINE=$((START_LINE+2+COL_COUNT))
 	done
-
-	#mount SET
-	START_LINE=$((COL_COUNT+4))
-	for LINE in `seq 1 $COL_COUNT`; do
-		VAL=`parse_one_row_val`
-		SET_LIST="${SET_LIST}${VAL}"
-		if [ $LINE -lt $COL_COUNT ]; then
-			SET_LIST="${SET_LIST}, "
-		fi
-	done
-
-	CMD="$CMD ($NAME_LIST) = ($SET_LIST) where ($NAME_LIST) = ($WHERE_LIST)"
-	write_sql
-}
-
-function revert_update2()
-{
-	CMD="update $FQ_TABLE_NAME set"
-	TMP_COL_COUNT=`wc -l $EVENT | cut -d \  -f 1`
-	for I in `seq 1 $COL_COUNT`; do
-		COL_NAME=`head -n $I $COL_FILE | tail -n 1`
-		NAME_LIST="${NAME_LIST}${COL_NAME}"
-		if [ $I -lt $COL_COUNT ]; then
-			NAME_LIST="${NAME_LIST}, "
-		fi
-	done
-
-	#mount SET
-	START_LINE=3
-	for LINE in `seq 1 $COL_COUNT`; do
-		COL_NAME=`head -n $LINE $COL_FILE | tail -n 1`
-		VAL=`parse_one_row_val`
-		SET_COL="$COL_NAME = $VAL"
-		SET_LIST="${SET_LIST}${SET_COL}"
-		if [ $LINE -lt $COL_COUNT ]; then
-			SET_LIST="${SET_LIST}, "
-		fi
-	done
-
-	#mount WHERE
-	START_LINE=$((COL_COUNT+4))
-	for LINE in `seq 1 $COL_COUNT`; do
-		VAL=`parse_one_row_val`
-		WHERE_LIST="${WHERE_LIST}${VAL}"
-		if [ $LINE -lt $COL_COUNT ]; then
-			WHERE_LIST="${WHERE_LIST}, "
-		fi
-	done
-
-	CMD="$CMD $SET_LIST where ($NAME_LIST) = ($WHERE_LIST)"
-	write_sql
 }
 
 function revert_sql_cmds()
@@ -237,25 +206,23 @@ function revert_sql_cmds()
 #look for table map with required table
 	STR="table_map: \`$DATABASE\`\.\`$TABLE_NAME\`"
 	LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	#cat $SQL
 	grep -ni "$STR" $SQL | cut -d : -f 1 >$LINE_LIST
 	LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
 	for START_LINE in `cat $LINE_LIST`; do
 		cp $SQL /tmp/binlog.sql
 		EVENT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		parse_one_event || return 1
-		cat $EVENT
 		OP=`head -n 1 $EVENT | cut -d \  -f 2`
 		case $OP in
 			UPDATE)
-				revert_update2;;
+				revert_update || { rm $EVENT $LINE_LIST; return 1; };;
 			*)
 				write_out "Unsupported command found in binlog: $OP"
-				rm $LINE_LIST
+				rm $EVENT $LINE_LIST
 				return 1;;
 		esac
 	done
-	rm $LINE_LIST
+	rm $EVENT $LINE_LIST
 }
 
 function run()
@@ -265,7 +232,6 @@ function run()
 	backup binlog || return 1
 	FIRST_BINLOG=`get_first_binlog` || return 1
 	if [ -z "$FIRST_BINLOG" ]; then
-		exec 5>&-
 		write_out "Unavailable timestamp"
 		return 1
 	fi
@@ -273,12 +239,12 @@ function run()
 	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
 	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE; return 1; }
-	read_binlogs || { rm $COL_FILE; rm -fr $SQL_DIR; exec 5>&-; return 1; }
+	read_binlogs || { rm $COL_FILE; rm -fr $SQL_DIR; return 1; }
 	exec_sqls 
 	RC=$?
 	rm $COL_FILE
 	rm -fr $SQL_DIR
-	exec 5>&-
+	exec 5>-
 	return $RC
 }
 
