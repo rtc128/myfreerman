@@ -1,5 +1,15 @@
 #!/bin/bash
 
+function check_no_blob()
+{
+	CMD="select count(1) from information_schema.columns where table_schema = '$DATABASE' and table_name = '$TABLE_NAME' and column_type = 'blob'"
+	COUNT=`mysql -N --socket="$SERVER_SOCKET" -e "$CMD"` || return 1
+	if [ $COUNT -gt 0 ]; then
+		write_out "Table with BLOB column is unsupported"
+		return 1
+	fi
+}
+
 function exec_sqls()
 {
 	for F in `ls -R $SQL_DIR`; do
@@ -250,6 +260,7 @@ function revert_sql_cmds()
 
 function run()
 {
+	check_no_blob || return 1
 	lock || return 1
 	backup binlog || return 1
 	FIRST_BINLOG=`get_first_binlog` || return 1
