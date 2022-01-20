@@ -2561,8 +2561,12 @@ function read_rman_config()
 		READ_ONLY=0
 	fi
 
-	#process threads (1)
-	PROCESS_THREADS=1
+	#process threads
+	PROCESS_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION process_threads 2>/dev/null`"
+	#default: 1
+	if [ -z "$PROCESS_THREADS" ]; then
+		PROCESS_THREADS=1
+	fi
 
 	#backup read threads
 	BACKUP_READ_THREADS="`crudini --get "$RMAN_CONFIG" $INI_SECTION backup_read_threads 2>/dev/null`"

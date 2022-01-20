@@ -15,8 +15,7 @@ function exec_sqls()
 	write_out "Running flashback script"
 	for F in `ls -r $SQL_DIR`; do
 		FF=$SQL_DIR/$F
-		CMD="`cat $FF`"
-		echo "$CMD;" >&5 || return 1
+		cat $FF >&5 || return 1
 	done
 	CMD="commit;"
 	echo "$CMD" >&5 || return 1
@@ -56,15 +55,15 @@ function lock()
 
 function parse_one_event()
 {
-	TAIL=$((LINE_COUNT-START_LINE-3))
+	TAIL=$((SQL_LINE_COUNT-START_LINE+1))
 	#look for statement end mark
 	EFF_START_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^#.*STMT_END_F$' | cut -d : -f 1`
-	EFF_START_LINE=$((EFF_START_LINE+START_LINE+2))
-	TAIL=$((LINE_COUNT-EFF_START_LINE-1))
-	TMP_END_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^# at ' | cut -d : -f 1`
-	END_LINE=$((TMP_END_LINE+EFF_START_LINE))
-	HEAD=$END_LINE
-	TAIL=$((END_LINE-EFF_START_LINE-1))
+	EFF_START_LINE=$((EFF_START_LINE+START_LINE))
+	TAIL=$((SQL_LINE_COUNT-EFF_START_LINE+1))
+	END_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^# at ' | cut -d : -f 1`
+	EFF_END_LINE=$((EFF_START_LINE+END_LINE-2))
+	HEAD=$EFF_END_LINE
+	TAIL=$((EFF_END_LINE-EFF_START_LINE+1))
 	head -n $HEAD $SQL | tail -n $TAIL >$EVENT
 }
 
@@ -216,21 +215,36 @@ function revert_sql_cmds()
 	STR="table_map: \`$DATABASE\`\.\`$TABLE_NAME\`"
 	LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	grep -ni "$STR" $SQL | cut -d : -f 1 >$LINE_LIST
-	LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
-	for START_LINE in `cat $LINE_LIST`; do
-		EVENT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	LINES_LINE_COUNT=`wc -l $LINE_LIST | awk '{ print $1; }'`
+	SQL_LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
+	for I in `seq 1 $PROCESS_THREADS`; do
+		revert_sql_cmds_th $I &
+	done
+	wait
+	rm $LINE_LIST
+}
+
+function revert_sql_cmds_th()
+{
+	THREAD_ID=$1
+	EVENT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	EVENT_NUM=$THREAD_ID
+	while [ $EVENT_NUM -le $LINES_LINE_COUNT ]; do
+		START_LINE=`head -n $EVENT_NUM $LINE_LIST | tail -n 1`
 		parse_one_event || return 1
 		OP=`head -n 1 $EVENT | cut -d \  -f 2`
 		case $OP in
 			UPDATE)
-				revert_update || { rm $EVENT $LINE_LIST; return 1; };;
+				revert_update || { rm $EVENT; return 1; };;
 			*)
 				write_out "Unsupported command found in binlog: $OP"
-				rm $EVENT $LINE_LIST
+				rm $EVENT
+				cp $SQL /tmp/binlog.sql
 				return 1;;
 		esac
+		EVENT_NUM=$((EVENT_NUM+PROCESS_THREADS))
 	done
-	rm $EVENT $LINE_LIST
+	rm $EVENT
 }
 
 function run()
@@ -257,11 +271,9 @@ function run()
 
 function write_sql()
 {
-	COUNT=`ls $SQL_DIR | wc -l`
-	N=$((COUNT+1))
-	F=`printf %07d.sql $N`
+	F=`printf %07d.sql $EVENT_NUM`
 	FF=$SQL_DIR/$F
-	echo "$CMD" >$FF
+	echo "$CMD;" >>$FF
 }
 
 run $*
