@@ -1,5 +1,16 @@
 #!/bin/bash
 
+function check_upd_col_count()
+{
+	#get number of cols in event, and compare to cur number of cols in table
+	TMP_EV_COL_COUNT=`grep -n -m 1 "^### SET" $EVENT | cut -d : -f 1`
+	EV_COL_COUNT=$((TMP_EV_COL_COUNT-3))
+	if [ $EV_COL_COUNT -ne $COL_COUNT ]; then
+		write_out "Table structure was modified - flashback not supported"
+		return 1
+	fi
+}
+
 function check_no_blob()
 {
 	CMD="select count(1) from information_schema.columns where table_schema = '$DATABASE' and table_name = '$TABLE_NAME' and column_type = 'blob'"
@@ -39,6 +50,27 @@ function get_first_binlog()
 	done
 }
 
+function get_pk()
+{
+	PK_LIST=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	OUT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+	mysql --socket="$SERVER_SOCKET" -N -e "desc $FQ_TABLE_NAME" | awk '{ print $1 " " $4; }' >$OUT
+	COL_POS=0
+	for KEY in `awk '{ print $2; }' $OUT`; do
+		COL_POS=$((COL_POS+1))
+		if [ "$KEY" == "PRI" ]; then
+			echo $COL_POS >>$PK_LIST
+		fi
+	done
+	rm $OUT
+	COUNT=`wc -l $PK_LIST | awk '{ print $1; }'`
+	if [ $COUNT -eq 0 ]; then
+		rm $PK_LIST
+		write_out "Table has no PK"
+		return 1
+	fi
+}
+
 function list_table_cols()
 {
 	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
@@ -55,6 +87,7 @@ function lock()
 
 function parse_one_event()
 {
+	[ -f $SQL ] || return 1
 	TAIL=$((SQL_LINE_COUNT-START_LINE+1))
 	#look for statement end mark
 	EFF_START_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^#.*STMT_END_F$' | cut -d : -f 1`
@@ -131,7 +164,6 @@ function read_one_binlog()
 	FERR=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	SQL=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	mysqlbinlog --defaults-file="$SERVER_CONFIG" -vvv --base64-output=DECODE-ROWS --database=$DATABASE --result-file=$SQL --start-datetime="$REQ_TIMESTAMP" $PLAIN 2>$ERR
-	cp $SQL /tmp/binlog.sql
 	RC=$?
 	rm $PLAIN
 	grep -vwi warning $ERR >$FERR
@@ -139,8 +171,8 @@ function read_one_binlog()
 	write_file_out $FERR
 	rm $FERR
 	[ $RC -eq 0 ] || { rm $SQL; return 1; }
-	revert_sql_cmds || { rm $SQL; return 1; }
-	rm $SQL
+	revert_sql_cmds || { rm -f $SQL; return 1; }
+	rm -f $SQL
 }
 
 function revert_insert()
@@ -167,20 +199,29 @@ function revert_insert()
 
 function revert_update()
 {
+	check_upd_col_count || return 1
 	EVENT_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+
+	#col name list for WHERE (only pk members)
+	FIRST=1
+	WHERE_NAME_LIST=
 	for I in `seq 1 $COL_COUNT`; do
-		COL_NAME=`head -n $I $COL_FILE | tail -n 1`
-		NAME_LIST="${NAME_LIST}${COL_NAME}"
-		if [ $I -lt $COL_COUNT ]; then
-			NAME_LIST="${NAME_LIST}, "
+		if ! grep -w $I $PK_LIST >/dev/null; then
+			continue
 		fi
+		COL_NAME=`head -n $I $COL_FILE | tail -n 1`
+		if [ $FIRST -eq 0 ]; then
+			WHERE_NAME_LIST="${WHERE_NAME_LIST}, "
+		fi
+		WHERE_NAME_LIST="${WHERE_NAME_LIST}${COL_NAME}"
+		FIRST=0
 	done
 
 	START_LINE=3
 	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
 		CMD="update $FQ_TABLE_NAME set"
 		SET_LIST=
-		#mount SET
+		#mount SET (all cols)
 		for LINE in `seq 1 $COL_COUNT`; do
 			COL_NAME=`head -n $LINE $COL_FILE | tail -n 1`
 			VAL=`parse_one_row_val`
@@ -191,18 +232,23 @@ function revert_update()
 			fi
 		done
 
-		#mount WHERE
+		#mount WHERE (only pk members)
 		START_LINE=$((START_LINE+1+COL_COUNT))
-		WHERE_LIST=
+		FIRST=1
+		WHERE_VAL_LIST=
 		for LINE in `seq 1 $COL_COUNT`; do
-			VAL=`parse_one_row_val`
-			WHERE_LIST="${WHERE_LIST}${VAL}"
-			if [ $LINE -lt $COL_COUNT ]; then
-				WHERE_LIST="${WHERE_LIST}, "
+			if ! grep -w $LINE $PK_LIST >/dev/null; then
+				continue
 			fi
+			VAL=`parse_one_row_val`
+			if [ $FIRST -eq 0 ]; then
+				WHERE_VAL_LIST="${WHERE_VAL_LIST}, "
+			fi
+			WHERE_VAL_LIST="${WHERE_VAL_LIST}${VAL}"
+			FIRST=0
 		done
 
-		CMD="$CMD $SET_LIST where ($NAME_LIST) = ($WHERE_LIST)"
+		CMD="$CMD $SET_LIST where ($WHERE_NAME_LIST) = ($WHERE_VAL_LIST)"
 		write_sql
 
 		START_LINE=$((START_LINE+2+COL_COUNT))
@@ -222,6 +268,7 @@ function revert_sql_cmds()
 	done
 	wait
 	rm $LINE_LIST
+	[ -f $SQL ] || return 1
 }
 
 function revert_sql_cmds_th()
@@ -235,11 +282,10 @@ function revert_sql_cmds_th()
 		OP=`head -n 1 $EVENT | cut -d \  -f 2`
 		case $OP in
 			UPDATE)
-				revert_update || { rm $EVENT; return 1; };;
+				revert_update || { rm $SQL $EVENT; return 1; };;
 			*)
 				write_out "Unsupported command found in binlog: $OP"
-				rm $EVENT
-				cp $SQL /tmp/binlog.sql
+				rm $SQL $EVENT
 				return 1;;
 		esac
 		EVENT_NUM=$((EVENT_NUM+PROCESS_THREADS))
@@ -250,21 +296,22 @@ function revert_sql_cmds_th()
 function run()
 {
 	check_no_blob || return 1
-	lock || return 1
-	backup binlog || return 1
-	FIRST_BINLOG=`get_first_binlog` || return 1
+	get_pk || return 1
+	lock || { rm $PK_LIST; return 1; }
+	backup binlog || { rm $PK_LIST; return 1; }
+	FIRST_BINLOG=`get_first_binlog` || { rm $PK_LIST; return 1; }
 	if [ -z "$FIRST_BINLOG" ]; then
 		write_out "Unavailable timestamp"
-		return 1
+		{ rm $PK_LIST; return 1; }
 	fi
 	COL_FILE=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
+	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE$ PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
-	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE; return 1; }
-	read_binlogs || { rm $COL_FILE; rm -fr $SQL_DIR; return 1; }
+	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE $PK_LIST; return 1; }
+	read_binlogs || { rm $COL_FILE; rm -fr $PK_LIST $SQL_DIR; return 1; }
 	exec_sqls 
 	RC=$?
-	rm $COL_FILE
+	rm $COL_FILE $PK_LIST
 	rm -fr $SQL_DIR
 	return $RC
 }
