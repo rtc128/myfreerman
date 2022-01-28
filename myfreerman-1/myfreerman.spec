@@ -1,11 +1,11 @@
 Name:           myfreerman
-Version:        2
-Release:        2.0.0
+Version:			 2.0.0
+Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
 License:			 GPL
-Source0:			 myfreerman-2.tar.gz
+Source0:			 myfreerman.tar.gz
 Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-enterprise-backup
 
 %description
@@ -30,7 +30,7 @@ install -m 0755 -d $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
 install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
-install -m 0644 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %files
 /usr/bin/myfreerman
@@ -40,14 +40,14 @@ install -m 0644 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %changelog
 
-* xxx Rodrigo Tassinari 2.0.0
-- Support for table flashback (only UPDATE)
+#* xxx Rodrigo Tassinari 2.0.0
+#- Support for table flashback (only UPDATE)
 
 * Mon Dec 13 2021 Rodrigo Tassinari 1.8.9
 - In binlog backup, remove orphan tmp files
 - In binlog backup, crosscheck sequences and remove sequences that are from the future
  
-* Wed Nov 22 2021 Rodrigo Tassinari 1.8.8
+* Mon Nov 22 2021 Rodrigo Tassinari 1.8.8
 - In RECOVER SLAVE, reset slave before applying binlogs
 
 * Mon Nov 22 2021 Rodrigo Tassinari 1.8.7
