@@ -30,6 +30,10 @@ drop
 
 	database
 
+flashback
+
+	table
+
 init
 
 	database
@@ -82,6 +86,8 @@ It adds support for:
 
 - Drop a database
 
+- Table flashbacks
+
 It cannot be used remotely, because binary logs are saved using OS commands.
 
 .SH CONFIGURATION
@@ -115,6 +121,18 @@ Backup the database. Used for full backups and for binary log backups.
 
 Drop data from local server.
 
+
+.B flashback
+
+Flashback tables to previous states by timestamps.
+
+Flashback is not supported for tables that had INSERT or DELETE commands.
+
+Flashback is not supported for tables with BLOB columns.
+
+Flashback is not supported for tables that had the structure changed.
+
+Flashback is not supported for tables that were TRUNCATED.
 
 .B init
 
