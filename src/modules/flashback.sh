@@ -81,6 +81,8 @@ function lock()
 	exec 5> >(mysql --socket="$SERVER_SOCKET")
 	CMD="start transaction;"
 	echo "$CMD" >&5 || return 1
+	CMD="set foreign_key_checks = off;"
+	echo "$CMD" >&5 || return 1
 	CMD="lock tables $FQ_TABLE_NAME write;"
 	echo "$CMD" >&5 || return 1
 }
