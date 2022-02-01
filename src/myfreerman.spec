@@ -6,7 +6,7 @@ Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression
 BuildArch:      noarch
 License:			 GPL
 Source0:			 myfreerman.tar.gz
-Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-enterprise-backup
+Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-commercial-backup
 
 %description
 MyFreeRMan uses MEB to create/restore backups of MySQL databases.
