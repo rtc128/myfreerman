@@ -14,7 +14,7 @@ function check_upd_col_count()
 function check_no_blob()
 {
 	CMD="select count(1) from information_schema.columns where table_schema = '$DATABASE' and table_name = '$TABLE_NAME' and column_type = 'blob'"
-	COUNT=`mysql -N --socket="$SERVER_SOCKET" -e "$CMD"` || return 1
+	COUNT=`mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "$CMD"` || return 1
 	if [ $COUNT -gt 0 ]; then
 		write_out "Table with BLOB column is unsupported"
 		return 1
@@ -54,7 +54,7 @@ function get_pk()
 {
 	PK_LIST=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	OUT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysql --socket="$SERVER_SOCKET" -N -e "desc $FQ_TABLE_NAME" | awk '{ print $1 " " $4; }' >$OUT
+	mysql --socket="$SERVER_SOCKET" -N $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | awk '{ print $1 " " $4; }' >$OUT
 	COL_POS=0
 	for KEY in `awk '{ print $2; }' $OUT`; do
 		COL_POS=$((COL_POS+1))
@@ -73,12 +73,12 @@ function get_pk()
 
 function list_table_cols()
 {
-	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
+	mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
 }
 
 function lock()
 {
-	exec 5> >(mysql --socket="$SERVER_SOCKET")
+	exec 5> >(mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT)
 	CMD="start transaction;"
 	echo "$CMD" >&5 || return 1
 	CMD="set foreign_key_checks = off;"
@@ -307,7 +307,7 @@ function run()
 		{ rm $PK_LIST; return 1; }
 	fi
 	COL_FILE=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql -N --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE$ PK_LIST; return 1; }
+	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE$ PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
 	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE $PK_LIST; return 1; }
 	read_binlogs || { rm $COL_FILE; rm -fr $PK_LIST $SQL_DIR; return 1; }

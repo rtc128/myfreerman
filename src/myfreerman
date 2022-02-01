@@ -36,7 +36,7 @@ function backup()
 
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
 	ERR_LOG=`mktemp /tmp/myfreerman.XXXXXX`
-	mysqladmin --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT ping >/dev/null 2>$ERR_LOG
+	mysqladmin --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT status >/dev/null 2>$ERR_LOG
 	RC=$?
 	write_file_out "$ERR_LOG"
 	rm "$ERR_LOG"
@@ -1138,6 +1138,11 @@ function flashback()
 		esac
 	done
 	shift $((OPTIND-1))
+	if [ $# -eq 0 ]; then
+		help_flashback
+		return 1
+	fi
+
 	CMD=$1
 	shift
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
