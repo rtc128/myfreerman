@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.0.0
+Version:			 2.1.0
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 

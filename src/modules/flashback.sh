@@ -1,10 +1,15 @@
 #!/bin/bash
 
-function check_upd_col_count()
+function check_del_col_count()
 {
 	#get number of cols in event, and compare to cur number of cols in table
-	TMP_EV_COL_COUNT=`grep -n -m 1 "^### SET" $EVENT | cut -d : -f 1`
-	EV_COL_COUNT=$((TMP_EV_COL_COUNT-3))
+	LINE_NUM=`grep -n -m 2 "^### DELETE FROM" $EVENT | tail -n 1 | cut -d : -f 1`
+	if [ $LINE_NUM -eq 1 ]; then
+		EV_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+		EV_COL_COUNT=$((EV_LINE_COUNT-2))
+	else
+		EV_COL_COUNT=$((LINE_NUM-3))
+	fi
 	if [ $EV_COL_COUNT -ne $COL_COUNT ]; then
 		write_out "Table structure was modified - flashback not supported"
 		return 1
@@ -17,6 +22,17 @@ function check_no_blob()
 	COUNT=`mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "$CMD"` || return 1
 	if [ $COUNT -gt 0 ]; then
 		write_out "Table with BLOB column is unsupported"
+		return 1
+	fi
+}
+
+function check_upd_col_count()
+{
+	#get number of cols in event, and compare to cur number of cols in table
+	TMP_EV_COL_COUNT=`grep -n -m 1 "^### SET" $EVENT | cut -d : -f 1`
+	EV_COL_COUNT=$((TMP_EV_COL_COUNT-3))
+	if [ $EV_COL_COUNT -ne $COL_COUNT ]; then
+		write_out "Table structure was modified - flashback not supported"
 		return 1
 	fi
 }
@@ -177,6 +193,32 @@ function read_one_binlog()
 	rm -f $SQL
 }
 
+function revert_delete()
+{
+	check_del_col_count || return 1
+	EVENT_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+
+	START_LINE=3
+	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
+		CMD="insert into $FQ_TABLE_NAME"
+		FIRST=1
+		VAL_LIST=
+		for LINE in `seq 1 $COL_COUNT`; do
+			VAL=`parse_one_row_val`
+			if [ $FIRST -eq 0 ]; then
+				VAL_LIST="${VAL_LIST}, "
+			fi
+			VAL_LIST="${VAL_LIST}${VAL}"
+			FIRST=0
+		done
+
+		CMD="$CMD values ($VAL_LIST)"
+		write_sql
+
+		START_LINE=$((START_LINE+2+COL_COUNT))
+	done
+}
+
 function revert_insert()
 {
 	CMD="delete from $FQ_TABLE_NAME where"
@@ -283,6 +325,8 @@ function revert_sql_cmds_th()
 		parse_one_event || return 1
 		OP=`head -n 1 $EVENT | cut -d \  -f 2`
 		case $OP in
+			DELETE)
+				revert_delete || { rm $SQL $EVENT; return 1; };;
 			UPDATE)
 				revert_update || { rm $SQL $EVENT; return 1; };;
 			*)
