@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.1.0
+Version:			 2.1.1
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -40,8 +40,8 @@ install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %changelog
 
-#* xxx Rodrigo Tassinari 2.0.0
-#- Support for table flashback (only UPDATE)
+* Tue Apr 19 2022 Rodrigo Tassinari 2.1.1
+- Added support for DELETE in flashback
 
 * Mon Dec 13 2021 Rodrigo Tassinari 1.8.9
 - In binlog backup, remove orphan tmp files
