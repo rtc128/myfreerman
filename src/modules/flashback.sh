@@ -37,6 +37,17 @@ function check_upd_col_count()
 	fi
 }
 
+function decode_blob_value()
+{
+	V="$1"
+	RESULT="$V"
+#if \x is found, change value format
+	if echo "$V" | grep -m 1 \\x >/dev/null; then
+		RESULT="x${V//\\x/}"
+	fi
+	echo "$RESULT"
+}
+
 function exec_sqls()
 {
 	write_out "Running flashback script"
@@ -127,7 +138,7 @@ function parse_one_row_val()
 	POS=`echo "$CONTENT" | grep -bo -m 1 '/\*.*\*/$' | cut -d : -f 1`
 	#get the comment
 	COMMENT=${CONTENT:$POS}
-#get data type: first workd inside the comment
+#get data type: first world inside the comment
 	DATATYPE=`echo "$COMMENT" | cut -d \  -f 2`
 	BASIC_TYPE=`echo $DATATYPE | cut -d \( -f 1`
 
@@ -140,6 +151,8 @@ function parse_one_row_val()
 
 	#handle specidic datatypes
 	case $BASIC_TYPE in
+		BLOB/TEXT)
+			VAL="`decode_blob_value \"$VAL\"`";;
 		TIMESTAMP)
 			VAL="from_unixtime($VAL)";;
 	esac
@@ -341,7 +354,7 @@ function revert_sql_cmds_th()
 
 function run()
 {
-	check_no_blob || return 1
+	#check_no_blob || return 1
 	get_pk || return 1
 	lock || { rm $PK_LIST; return 1; }
 	backup binlog || { rm $PK_LIST; return 1; }
