@@ -16,6 +16,22 @@ function check_del_col_count()
 	fi
 }
 
+function check_ins_col_count()
+{
+	#get number of cols in event, and compare to cur number of cols in table
+	LINE_NUM=`grep -n -m 2 "^### INSERT " $EVENT | tail -n 1 | cut -d : -f 1`
+	if [ $LINE_NUM -eq 1 ]; then
+		EV_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+		EV_COL_COUNT=$((EV_LINE_COUNT-2))
+	else
+		EV_COL_COUNT=$((LINE_NUM-3))
+	fi
+	if [ $EV_COL_COUNT -ne $COL_COUNT ]; then
+		write_out "Table structure was modified - flashback not supported"
+		return 1
+	fi
+}
+
 function check_no_blob()
 {
 	CMD="select count(1) from information_schema.columns where table_schema = '$DATABASE' and table_name = '$TABLE_NAME' and column_type = 'blob'"
@@ -234,24 +250,48 @@ function revert_delete()
 
 function revert_insert()
 {
-	CMD="delete from $FQ_TABLE_NAME where"
-	TMP_COL_COUNT=`wc -l $EVENT | cut -d \  -f 1`
-	NAME_LIST="("
-	for I in `seq 1 $COL_COUNT`; do
-		COL_NAME=`head -n $I $COL_FILE | tail -n 1`
-		NAME_LIST="${NAME_LIST}${COL_NAME}"
-		if [ $I -lt $COL_COUNT ]; then
-			NAME_LIST="${NAME_LIST}, "
-		fi
-	done
-	NAME_LIST="${NAME_LIST})"
+	check_ins_col_count || return 1
+	EVENT_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
+	START_LINE=3
+	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
+		CMD="delete from $FQ_TABLE_NAME where"
 
-	VAL_LIST="("
-	for LINE in `seq 3 $COL_COUNT`; do
-		parse_one_row_val
+		#mount col list (only pk members)
+		WHERE_NAME_LIST=
+		FIRST=1
+		for I in `seq 1 $COL_COUNT`; do
+			if ! grep -w $I $PK_LIST >/dev/null; then
+				continue
+			fi
+			COL_NAME=`head -n $I $COL_FILE | tail -n 1`
+			if [ $FIRST -eq 0 ]; then
+				WHERE_NAME_LIST="${WHERE_NAME_LIST}, "
+			fi
+			WHERE_NAME_LIST="${WHERE_NAME_LIST}${COL_NAME}"
+			FIRST=0
+		done
+
+		#mount WHERE (only pk members)
+		#START_LINE=$((START_LINE+1+COL_COUNT))
+		FIRST=1
+		WHERE_VAL_LIST=
+		for LINE in `seq 1 $COL_COUNT`; do
+			if ! grep -w $LINE $PK_LIST >/dev/null; then
+				continue
+			fi
+			VAL=`parse_one_row_val`
+			if [ $FIRST -eq 0 ]; then
+				WHERE_VAL_LIST="${WHERE_VAL_LIST}, "
+			fi
+			WHERE_VAL_LIST="${WHERE_VAL_LIST}${VAL}"
+			FIRST=0
+		done
+
+		CMD="$CMD ($WHERE_NAME_LIST) = ($WHERE_VAL_LIST)"
+		write_sql
+
+		START_LINE=$((START_LINE+2+COL_COUNT))
 	done
-	CMD="$CMD $NAME_LIST;"
-	echo $CMD
 }
 
 function revert_update()
@@ -340,6 +380,8 @@ function revert_sql_cmds_th()
 		case $OP in
 			DELETE)
 				revert_delete || { rm $SQL $EVENT; return 1; };;
+			INSERT)
+				revert_insert || { rm $SQL $EVENT; return 1; };;
 			UPDATE)
 				revert_update || { rm $SQL $EVENT; return 1; };;
 			*)
