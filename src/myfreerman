@@ -64,6 +64,7 @@ function backup()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function backup_binlog()
@@ -358,9 +359,10 @@ function help_flashback()
 function help_flashback_table()
 {
 	echo "* Flashback a table to a specific moment in the past"
-	echo "	flashback table <database>.<table> <timestamp>"
-	echo "	   databaese: database that has the table"
+	echo "	flashback table <database>.<table>[:<new table name>] <timestamp>"
+	echo "	   database: database that has the table"
 	echo "	   table: table name"
+	echo "	      optional new table name to receive the result"
    echo "      <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "         hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
 }
@@ -1155,6 +1157,7 @@ function flashback()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function flashback_table()
@@ -1177,15 +1180,30 @@ function flashback_table()
 		help_flashback_table
 		return 1 
 	fi
-	FQ_TABLE_NAME=$1
-	DATABASE=`echo $FQ_TABLE_NAME | cut -d . -f 1`
-	TABLE_NAME=`echo $FQ_TABLE_NAME | cut -d . -f 2`
+
+	DATABASE=`echo $1 | cut -d . -f 1`
+	COMPLETE_TABLE_NAME=`echo $1 | cut -d . -f 2`
+	TABLE_NAME=`echo $COMPLETE_TABLE_NAME | cut -d : -f 1`
+	FQ_TABLE_NAME=$DATABASE.$TABLE_NAME
+	NEW_TABLE_NAME=`echo $COMPLETE_TABLE_NAME | cut -d : -f 2`
+	FQ_NEW_TABLE_NAME=$DATABASE.$NEW_TABLE_NAME
+
+	#if new table chosen, it cannot exist
+	if [ "$NEW_TABLE_NAME" != "$TABLE_NAME" ]; then
+		MOD_SH="$MYFREERMAN_MOD_DIR/catalog.sh"
+		source "$MOD_SH" || return 1
+		table_exists $DATABASE $NEW_TABLE_NAME
+		RETVAL=$?
+		[ $RETVAL -ge 0 ] || return 1
+		[ $RETVAL -eq 0 ] || { write_out "New table name exists - cannot continue"; return 1; }
+	fi
+
 	USER_TIMESTAMP=$2
 	REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP | sed -e 's/_/ /'` || return 1
 	write_out "Requested timestamp: $REQ_TIMESTAMP"
 	confirm_operation
 	MOD_SH="$MYFREERMAN_MOD_DIR/flashback.sh"
-	source "$MOD_SH"
+	source "$MOD_SH" || return 1
 	return $?
 }
 
@@ -1387,6 +1405,7 @@ function drop()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function drop_database()
@@ -1512,6 +1531,7 @@ function init()
 			return 1
 			;;
 	esac
+	write_out "Finished"
 }
 
 function init_database()
@@ -1737,6 +1757,7 @@ function init_slave()
 		return 1
 	fi
 
+	REPORT_FINISHED=0
 	MASTER_HOST=$1
 	MASTER_PORT=`echo $MASTER_HOST | cut -s -d \: -f 2`
 	if [ -z "$MASTER_PORT" ]; then
@@ -3056,6 +3077,9 @@ function restore()
 			return 1
 			;;
 	esac
+	if [ "$REPORT_FINISHED" != "0" ]; then
+		write_out "Finished"
+	fi
 }
 
 function restore_config()

@@ -36,6 +36,11 @@ lock_file: Lock file path. Lock file is used to block simultaneous instances run
 max_mem: max memory Enterprise Backup is allowed to use - in Mb.
    DEFAULT: 300.
 
+process_threads: Number of threads to create for binary log parsing, in FLASHBACK command.
+	DEFAULT: 1
+	MIN: 1
+	MAX: 20
+
 read_only: 1 to avoid making backups. Useful for safety when an instance is always only a copy from another one.
    DEFAULT: 0
 

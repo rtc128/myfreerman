@@ -1,5 +1,13 @@
 #!/bin/bash
 
+function check_create_new_table()
+{
+	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
+	write_out "Creating new table"
+	CMD="create table $FQ_NEW_TABLE_NAME as select * from $FQ_TABLE_NAME;"
+	echo "$CMD" >&5 || return 1
+}
+
 function check_del_col_count()
 {
 	#get number of cols in event, and compare to cur number of cols in table
@@ -32,14 +40,24 @@ function check_ins_col_count()
 	fi
 }
 
-function check_no_blob()
+function check_lock()
 {
-	CMD="select count(1) from information_schema.columns where table_schema = '$DATABASE' and table_name = '$TABLE_NAME' and column_type = 'blob'"
-	COUNT=`mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "$CMD"` || return 1
-	if [ $COUNT -gt 0 ]; then
-		write_out "Table with BLOB column is unsupported"
-		return 1
-	fi
+	write_out "Connecting to mysql"
+	exec 5> >(mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT)
+
+	write_out "Starting transaction"
+	CMD="start transaction;"
+	echo "$CMD" >&5 || return 1
+
+	write_out "Disabling FK checks"
+	CMD="set foreign_key_checks = off;"
+	echo "$CMD" >&5 || return 1
+
+	#lock only if not using new table
+	[ "$NEW_TABLE_NAME" == "$TABLE_NAME" ] || return 0
+	write_out "Locking table"
+	CMD="lock tables $FQ_TABLE_NAME write;"
+	echo "$CMD" >&5 || return 1
 }
 
 function check_upd_col_count()
@@ -119,17 +137,6 @@ function list_table_cols()
 	mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
 }
 
-function lock()
-{
-	exec 5> >(mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT)
-	CMD="start transaction;"
-	echo "$CMD" >&5 || return 1
-	CMD="set foreign_key_checks = off;"
-	echo "$CMD" >&5 || return 1
-	CMD="lock tables $FQ_TABLE_NAME write;"
-	echo "$CMD" >&5 || return 1
-}
-
 function parse_one_event()
 {
 	[ -f $SQL ] || return 1
@@ -150,7 +157,7 @@ function parse_one_row_val()
 	#get content
 	TLINE=$((LINE+START_LINE-1))
 	CONTENT="`head -n $TLINE $EVENT | tail -n 1`"
-	#find position of the comment in the end of the line
+#find position of the comment in the end of the line
 	POS=`echo "$CONTENT" | grep -bo -m 1 '/\*.*\*/$' | cut -d : -f 1`
 	#get the comment
 	COMMENT=${CONTENT:$POS}
@@ -229,7 +236,7 @@ function revert_delete()
 
 	START_LINE=3
 	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
-		CMD="insert into $FQ_TABLE_NAME"
+		CMD="insert into $FQ_NEW_TABLE_NAME"
 		FIRST=1
 		VAL_LIST=
 		for LINE in `seq 1 $COL_COUNT`; do
@@ -254,7 +261,7 @@ function revert_insert()
 	EVENT_LINE_COUNT=`wc -l $EVENT | cut -d \  -f 1`
 	START_LINE=3
 	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
-		CMD="delete from $FQ_TABLE_NAME where"
+		CMD="delete from $FQ_NEW_TABLE_NAME where"
 
 		#mount col list (only pk members)
 		WHERE_NAME_LIST=
@@ -316,7 +323,7 @@ function revert_update()
 
 	START_LINE=3
 	while [ $START_LINE -lt $EVENT_LINE_COUNT ]; do
-		CMD="update $FQ_TABLE_NAME set"
+		CMD="update $FQ_NEW_TABLE_NAME set"
 		SET_LIST=
 		#mount SET (all cols)
 		for LINE in `seq 1 $COL_COUNT`; do
@@ -396,15 +403,15 @@ function revert_sql_cmds_th()
 
 function run()
 {
-	#check_no_blob || return 1
 	get_pk || return 1
-	lock || { rm $PK_LIST; return 1; }
+	check_lock || { rm $PK_LIST; return 1; }
 	backup binlog || { rm $PK_LIST; return 1; }
 	FIRST_BINLOG=`get_first_binlog` || { rm $PK_LIST; return 1; }
 	if [ -z "$FIRST_BINLOG" ]; then
 		write_out "Unavailable timestamp"
 		{ rm $PK_LIST; return 1; }
 	fi
+	check_create_new_table || { rm $PK_LIST; return 1; }
 	COL_FILE=`mktemp /tmp/myfreerman.XXXXXX`
 	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE$ PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
@@ -425,4 +432,4 @@ function write_sql()
 }
 
 run $*
-exit $?
+return $?

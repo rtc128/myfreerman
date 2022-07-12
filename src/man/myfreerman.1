@@ -124,7 +124,7 @@ Drop data from local server.
 
 .B flashback
 
-Flashback tables to previous states by timestamps.
+Flashback tables to previous states by timestamps. Binary logs are parsed using multiple threads, according to 'process_threads' configuration.
 
 Flashback is not supported for tables that had the structure changed.
 
