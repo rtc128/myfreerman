@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.1.4
+RELEASE=2.1.5
 
 function backup()
 {
@@ -56,7 +56,9 @@ function backup()
 			backup_full $* || return 1
 			;;
 		binlog)
-			backup_binlog $* || return 1
+			check_lock_file
+			backup_binlog $* || { remove_lock_file; return 1; }
+			remove_lock_file
 			;;
 		*)
 			echo "Invalid backup type '$BKP_TYPE'" >&2
@@ -113,7 +115,6 @@ function backup_binlog()
 		BINLOG_BNAME="`basename $BINLOG_PREFIX`" || return 1
 	fi
 
-	check_lock_file || return 1
 	crosscheck_binlogs || return 1
 
 	#list binlogs, just ignoring the last one
@@ -951,7 +952,7 @@ function create_incarnation()
 function crosscheck_binlogs()
 {
 	write_out "Crosschecking binary logs"
-	CUR_SEQ=`get_current_binlog_sequence` || return 1
+	CUR_SEQ=`get_current_master_binlog_sequence` || { write_out "Cannot find information about current server binlogs"; return 1; }
 
 	#each sequence in backup that is higher =>remove
 	LIST=`ls "$BINLOG_BACKUP_DIR" 2>/dev/null`
@@ -1298,14 +1299,19 @@ function get_oldest_full_backup()
 	ls | head -n 1
 }
 
-function get_current_binlog_sequence()
+function get_current_master_binlog_sequence()
 {
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
 	ERR=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e 'show master status\G' >$BUFF 2>$ERR
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e 'show master status\G' | grep -vwi warning >$BUFF 2>$ERR
 	RC=$?
 	write_file_out $ERR
 	rm $ERR
+	#check if output is not empty
+	SIZE=`stat -c %s $BUFF`
+	if [ $SIZE -eq 0 ]; then
+		return 1
+	fi
 	[ $RC -eq 0 ] || { rm $BUFF; return 1; }
 	LONG_SEQ=`grep -wi file $BUFF | awk '{ print $2; }' | cut -d . -f 2`
 	rm $BUFF
@@ -1531,7 +1537,6 @@ function init()
 			return 1
 			;;
 	esac
-	write_out "Finished"
 }
 
 function init_database()
@@ -1733,6 +1738,7 @@ function init_database()
 	mysql --connect-expired-password --socket="$SOCKET" -u root "-p$PASSWORD" <$SQL
 	mysql_stop
 	rm $SQL
+	write_out "Finished"
 }
 
 function init_slave()
@@ -1808,6 +1814,7 @@ function init_slave()
 	sleep 10
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
 	mysql_stop
+	write_out "Finished"
 }
 
 function list()
@@ -3472,7 +3479,7 @@ function restore_target_instance()
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" >$TMP_LOG 2>&1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG >>"$LOG_FILE"
 		cat $TMP_LOG
@@ -3482,7 +3489,7 @@ function restore_target_instance()
 		fi
 	else
 		write_out "===== STARTING MEB ====="
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" || return 1 
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" || return 1 
 	fi
 #===========================================
 #Rodrigo Tassinari - 2020-03-11
