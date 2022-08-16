@@ -1,10 +1,11 @@
 #!/bin/bash
 
+set -e
 function check_create_new_table()
 {
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
 	write_out "Creating new table"
-	CMD="create table $FQ_NEW_TABLE_NAME as select * from $FQ_TABLE_NAME;"
+	CMD="create table $FQ_NEW_TABLE_NAME as select * from $FQ_TABLE_NAME limit 0;"
 	echo "$CMD" >&5 || return 1
 }
 
@@ -40,23 +41,49 @@ function check_ins_col_count()
 	fi
 }
 
-function check_lock()
+function check_populate_new_table()
+{
+	#if dest is another table, copy official table data to dest
+	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
+	write_out "Copying table contents"
+	CMD="insert into $FQ_NEW_TABLE_NAME select * from $FQ_TABLE_NAME;"
+	echo "$CMD" >&5 || return 1
+
+	write_out "Unlocking tables"
+	CMD="unlock tables;"
+	echo "$CMD" >&5 || return 1
+
+	if [ "$DEBUG" == "1" ]; then
+		echo "New table:" >&2
+		mysql --socket="$SERVER_SOCKET" -N $TARGET_CRED_OPT -e "select * from $FQ_NEW_TABLE_NAME" >&2
+	fi
+}
+
+function initialize()
 {
 	write_out "Connecting to mysql"
 	exec 5> >(mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT)
 
 	write_out "Starting transaction"
 	CMD="start transaction;"
-	echo "$CMD" >&5 || return 1
+	#echo "$CMD" >&5 || return 1
 
 	write_out "Disabling FK checks"
 	CMD="set foreign_key_checks = off;"
 	echo "$CMD" >&5 || return 1
+}
 
-	#lock only if not using new table
-	[ "$NEW_TABLE_NAME" == "$TABLE_NAME" ] || return 0
+function lock_tables()
+{
 	write_out "Locking table"
-	CMD="lock tables $FQ_TABLE_NAME write;"
+	#if not using new table, lock only requested table, allowing us to write
+	#if using new table, lock requested table with READ only, and new table with WRITE
+	if [ "$NEW_TABLE_NAME" == "$TABLE_NAME" ]; then
+		TABLE_LIST="$FQ_TABLE_NAME write"
+	else
+		TABLE_LIST="$FQ_TABLE_NAME read, $FQ_NEW_TABLE_NAME write"
+	fi
+	CMD="lock tables $TABLE_LIST;"
 	echo "$CMD" >&5 || return 1
 }
 
@@ -88,6 +115,7 @@ function exec_sqls()
 	for F in `ls -r $SQL_DIR`; do
 		FF=$SQL_DIR/$F
 		cat $FF >&5 || return 1
+		sleep 1
 	done
 	CMD="commit;"
 	echo "$CMD" >&5 || return 1
@@ -193,6 +221,15 @@ function read_binlogs()
 	F="binlog.${LSEQ}.gz"
 	FF="$BINLOG_BACKUP_DIR/$F"
 	while [ -f "$FF" ]; do
+		#if we have a binlog seq to stop, check it
+		if [ -n "$CUR_BINLOG_FULL" ]; then
+			LONG_SEQ=`echo $F | cut -d . -f 2`
+			SHORT_SEQ=`expr $LONG_SEQ + 0`
+			if [ $CUR_BINLOG_SEQ -lt $SHORT_SEQ ]; then
+				break
+			fi
+		fi
+
 		write_out "Reading binary log #$SEQ"
 		read_one_binlog $F || return 1
 		SEQ=`expr $SEQ + 1`
@@ -204,6 +241,7 @@ function read_binlogs()
 
 function read_one_binlog()
 {
+	local F
 	F=$1
 	PLAIN=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	FF="$BINLOG_BACKUP_DIR/$F"
@@ -217,7 +255,18 @@ function read_one_binlog()
 	ERR=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	FERR=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	SQL=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysqlbinlog --defaults-file="$SERVER_CONFIG" -vvv --base64-output=DECODE-ROWS --database=$DATABASE --result-file=$SQL --start-datetime="$REQ_TIMESTAMP" $PLAIN 2>$ERR
+
+	#if we have a binlog seq/pos to stop, request it
+	STOP_OPT=
+	if [ -n "$CUR_BINLOG_FULL" ]; then
+		LONG_SEQ=`echo $F | cut -d . -f 2`
+		SHORT_SEQ=`expr $LONG_SEQ + 0`
+		if [ $CUR_BINLOG_SEQ -eq $SHORT_SEQ ]; then
+			STOP_OPT=--stop-position=$CUR_BINLOG_POS
+		fi
+	fi
+
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" -vvv --base64-output=DECODE-ROWS --database=$DATABASE --result-file=$SQL --start-datetime="$REQ_TIMESTAMP" $STOP_OPT $PLAIN 2>$ERR
 	RC=$?
 	rm $PLAIN
 	grep -vwi warning $ERR >$FERR
@@ -226,6 +275,7 @@ function read_one_binlog()
 	rm $FERR
 	[ $RC -eq 0 ] || { rm $SQL; return 1; }
 	revert_sql_cmds || { rm -f $SQL; return 1; }
+	jobs
 	rm -f $SQL
 }
 
@@ -368,9 +418,12 @@ function revert_sql_cmds()
 	LINES_LINE_COUNT=`wc -l $LINE_LIST | awk '{ print $1; }'`
 	SQL_LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
 	for I in `seq 1 $PROCESS_THREADS`; do
-		revert_sql_cmds_th $I &
+		revert_sql_cmds_th $I #&
+	jobs
+		local PIDS="$PIDS $!"
 	done
-	wait
+	local LIST=`jobs -p`
+	jobs
 	rm $LINE_LIST
 	[ -f $SQL ] || return 1
 }
@@ -401,23 +454,35 @@ function revert_sql_cmds_th()
 	rm $EVENT
 }
 
-function run()
+function flashback_run()
 {
+	initialize || return 1
 	get_pk || return 1
-	check_lock || { rm $PK_LIST; return 1; }
+	check_create_new_table || { rm $PK_LIST; return 1; }
+	lock_tables || { rm $PK_LIST; return 1; }
+	CUR_BINLOG_FULL=
+	#if dest is another table, get current binlog position
+	if [ "$TABLE_NAME" != "$NEW_TABLE_NAME" ]; then
+		CUR_BINLOG_FULL=`binlog_get_current_master_binlog` || { rm $PK_LIST; return 1; }
+		CUR_BINLOG_SEQ=`echo $CUR_BINLOG_FULL | cut -d : -f 1`
+		CUR_BINLOG_POS=`echo $CUR_BINLOG_FULL | cut -d : -f 2`
+	fi
+	check_populate_new_table || { rm $PK_LIST; return 1; }
+	OLD_REPORT_FINISHED=$REPORT_FINISHED
+	REPORT_FINISHED=0
 	backup binlog || { rm $PK_LIST; return 1; }
+	REPORT_FINISHED=$OLD_REPORT_FINISHED
 	FIRST_BINLOG=`get_first_binlog` || { rm $PK_LIST; return 1; }
 	if [ -z "$FIRST_BINLOG" ]; then
 		write_out "Unavailable timestamp"
 		{ rm $PK_LIST; return 1; }
 	fi
-	check_create_new_table || { rm $PK_LIST; return 1; }
 	COL_FILE=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE$ PK_LIST; return 1; }
+	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE $PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
 	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE $PK_LIST; return 1; }
 	read_binlogs || { rm $COL_FILE; rm -fr $PK_LIST $SQL_DIR; return 1; }
-	exec_sqls 
+	exec_sqls
 	RC=$?
 	rm $COL_FILE $PK_LIST
 	rm -fr $SQL_DIR
@@ -430,6 +495,3 @@ function write_sql()
 	FF=$SQL_DIR/$F
 	echo "$CMD;" >>$FF
 }
-
-run $*
-return $?
