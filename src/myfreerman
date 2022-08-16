@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.1.5
+RELEASE=2.1.6
 
 function backup()
 {
@@ -66,7 +66,7 @@ function backup()
 			return 1
 			;;
 	esac
-	write_out "Finished"
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function backup_binlog()
@@ -1158,7 +1158,7 @@ function flashback()
 			return 1
 			;;
 	esac
-	write_out "Finished"
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function flashback_table()
@@ -1203,9 +1203,7 @@ function flashback_table()
 	REQ_TIMESTAMP=`expand_timestamp $USER_TIMESTAMP | sed -e 's/_/ /'` || return 1
 	write_out "Requested timestamp: $REQ_TIMESTAMP"
 	confirm_operation
-	MOD_SH="$MYFREERMAN_MOD_DIR/flashback.sh"
-	source "$MOD_SH" || return 1
-	return $?
+	flashback_run || return 1
 }
 
 function get_base_backup_binlog_name()
@@ -1411,7 +1409,7 @@ function drop()
 			return 1
 			;;
 	esac
-	write_out "Finished"
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function drop_database()
@@ -1738,7 +1736,7 @@ function init_database()
 	mysql --connect-expired-password --socket="$SOCKET" -u root "-p$PASSWORD" <$SQL
 	mysql_stop
 	rm $SQL
-	write_out "Finished"
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function init_slave()
@@ -1814,7 +1812,7 @@ function init_slave()
 	sleep 10
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
 	mysql_stop
-	write_out "Finished"
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function list()
@@ -2367,6 +2365,15 @@ function list_server_binlogs()
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
 	cat $LIST_FILE
 	rm $LIST_FILE
+}
+
+function load_modules()
+{
+	for F in "$MYFREERMAN_MOD_DIR"/*; do
+		if [ -x "$F" ]; then
+			source "$F" || return 1
+		fi
+	done
 }
 
 function mount_credentials_opt()
@@ -3084,9 +3091,7 @@ function restore()
 			return 1
 			;;
 	esac
-	if [ "$REPORT_FINISHED" != "0" ]; then
-		write_out "Finished"
-	fi
+	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
 function restore_config()
@@ -3567,6 +3572,7 @@ function restore_validate_tablenames()
 
 function run()
 {
+	REPORT_FINISHED=1
 	KILL_WAIT_TIMEOUT=300
 	SERVER_START_TIMEOUT=7200
 	SERVER_STOP_TIMEOUT=300
@@ -3629,6 +3635,7 @@ function run()
 		SERVER_INI_SECTION="${SERVER_INI_SECTION}@$MYSQL_SID"
 		MYSQL_DEFAULT_GROUP_SUFFIX="@$MYSQL_SID"
 	fi
+	load_modules || return 1
 	case $CMD in
 		apply)
 			apply $* || return 1
@@ -3788,12 +3795,18 @@ function wait_server_start()
 	done
 }
 
+function write_err()
+{
+	MSG="$1"
+	echo "$MSG" >&2
+}
+
 function write_file_out()
 {
-	F="$1"
-	cat "$F"
+	local OUT_F="$1"
+	cat "$OUT_F"
 	if [ -n "$LOG_FILE" ]; then
-		cat "$F" >>"$LOG_FILE"
+		cat "$OUT_F" >>"$LOG_FILE"
 	fi
 }
 

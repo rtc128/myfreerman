@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.1.5
+Version:			 2.1.6
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -30,15 +30,22 @@ install -m 0755 -d $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
 install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
+install -m 0755 modules/binlog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/catalog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %files
 /usr/bin/myfreerman
 /usr/share/man/man1/myfreerman.1.gz
 /usr/share/man/man8/myfreerman.conf.8.gz
+/usr/lib/myfreerman/modules/binlog.sh
+/usr/lib/myfreerman/modules/catalog.sh
 /usr/lib/myfreerman/modules/flashback.sh
 
 %changelog
+
+* Tue Aug 18 2022 Rodrigo Tassinari 2.1.6
+- Fix in table locking, in FLASHBACK
 
 * Fri Jun 10 2022 Rodrigo Tassinari 2.1.3
 - Added support for INSERT commands in flashback
