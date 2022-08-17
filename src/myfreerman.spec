@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.1.6
+Version:			 2.1.7
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -44,7 +44,10 @@ install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %changelog
 
-* Tue Aug 18 2022 Rodrigo Tassinari 2.1.6
+* Wed Aug 18 2022 Rodrigo Tassinari 2.1.7
+- Removed multi-thread support in FLASHBACK TABLE, because it was causing a bug
+
+* Tue Aug 17 2022 Rodrigo Tassinari 2.1.6
 - Fix in table locking, in FLASHBACK
 
 * Fri Jun 10 2022 Rodrigo Tassinari 2.1.3
