@@ -75,7 +75,7 @@ function initialize()
 
 function lock_tables()
 {
-	write_out "Locking table"
+	write_out "Locking tables"
 	#if not using new table, lock only requested table, allowing us to write
 	#if using new table, lock requested table with READ only, and new table with WRITE
 	if [ "$NEW_TABLE_NAME" == "$TABLE_NAME" ]; then
@@ -418,12 +418,10 @@ function revert_sql_cmds()
 	LINES_LINE_COUNT=`wc -l $LINE_LIST | awk '{ print $1; }'`
 	SQL_LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
 	for I in `seq 1 $PROCESS_THREADS`; do
-		revert_sql_cmds_th $I #&
-	jobs
-		local PIDS="$PIDS $!"
+		#revert_sql_cmds_th $I &
+		revert_sql_cmds_th $I || { rm $LINE_LIST; return 1; }
 	done
-	local LIST=`jobs -p`
-	jobs
+	wait
 	rm $LINE_LIST
 	[ -f $SQL ] || return 1
 }
@@ -481,11 +479,17 @@ function flashback_run()
 	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE $PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
 	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE $PK_LIST; return 1; }
+	if [ "$DEBUG" -eq "1" ]; then
+		echo "SQL directory: $SQL_DIR"
+	fi
 	read_binlogs || { rm $COL_FILE; rm -fr $PK_LIST $SQL_DIR; return 1; }
 	exec_sqls
 	RC=$?
 	rm $COL_FILE $PK_LIST
-	rm -fr $SQL_DIR
+
+	if [ "$DEBUG" -ne "1" ]; then
+		rm -fr $SQL_DIR
+	fi
 	return $RC
 }
 
