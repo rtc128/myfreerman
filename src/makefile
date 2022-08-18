@@ -15,3 +15,4 @@ rpm:
 	mv ~/rpmbuild/RPMS/noarch/*.rpm ~/rpm
 	rm myfreerman.1.gz myfreerman.conf.8.gz
 	rpmdev-wipetree
+	rm -fr /tmp/myfreerman-$(R)
