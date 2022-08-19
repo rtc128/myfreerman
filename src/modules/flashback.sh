@@ -3,7 +3,7 @@ function check_create_new_table()
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
 	write_out "Creating new table"
 	CMD="create table $FQ_NEW_TABLE_NAME as select * from $FQ_TABLE_NAME limit 0;"
-	echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 }
 
 function check_del_col_count()
@@ -44,11 +44,11 @@ function check_populate_new_table()
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
 	write_out "Copying table contents"
 	CMD="insert into $FQ_NEW_TABLE_NAME select * from $FQ_TABLE_NAME;"
-	echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 
 	write_out "Unlocking tables"
 	CMD="unlock tables;"
-	echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 
 	if [ "$DEBUG" == "1" ]; then
 		echo "New table:" >&2
@@ -63,25 +63,11 @@ function initialize()
 
 	write_out "Starting transaction"
 	CMD="start transaction;"
-	#echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 
 	write_out "Disabling FK checks"
 	CMD="set foreign_key_checks = off;"
-	echo "$CMD" >&5 || return 1
-}
-
-function lock_tables()
-{
-	write_out "Locking tables"
-	#if not using new table, lock only requested table, allowing us to write
-	#if using new table, lock requested table with READ only, and new table with WRITE
-	if [ "$NEW_TABLE_NAME" == "$TABLE_NAME" ]; then
-		TABLE_LIST="$FQ_TABLE_NAME write"
-	else
-		TABLE_LIST="$FQ_TABLE_NAME read, $FQ_NEW_TABLE_NAME write"
-	fi
-	CMD="lock tables $TABLE_LIST;"
-	echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 }
 
 function check_upd_col_count()
@@ -99,7 +85,7 @@ function decode_blob_value()
 {
 	V="$1"
 	RESULT="$V"
-#if \x is found, change value format
+	#if \x is found, change value format
 	if echo "$V" | grep -m 1 \\x >/dev/null; then
 		RESULT="x${V//\\x/}"
 	fi
@@ -115,7 +101,7 @@ function exec_sqls()
 		sleep 1
 	done
 	CMD="commit;"
-	echo "$CMD" >&5 || return 1
+	mysql_send_command "$CMD"
 }
 
 function get_first_binlog()
@@ -162,6 +148,27 @@ function list_table_cols()
 	mysql -N $TARGET_CRED_OPT --socket="$SERVER_SOCKET" -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || return 1
 }
 
+function lock_tables()
+{
+	write_out "Locking tables"
+	#if not using new table, lock only requested table, allowing us to write
+	#if using new table, lock requested table with READ only, and new table with WRITE
+	if [ "$NEW_TABLE_NAME" == "$TABLE_NAME" ]; then
+		TABLE_LIST="$FQ_TABLE_NAME write"
+	else
+		TABLE_LIST="$FQ_TABLE_NAME read, $FQ_NEW_TABLE_NAME write"
+	fi
+	CMD="lock tables $TABLE_LIST;"
+	mysql_send_command "$CMD"
+}
+
+function mysql_send_command()
+{
+	CMD="$1"
+	echo "$CMD" >&5 || return 1
+	sleep 1
+}
+
 function parse_one_event()
 {
 	[ -f $SQL ] || return 1
@@ -182,7 +189,7 @@ function parse_one_row_val()
 	#get content
 	TLINE=$((LINE+START_LINE-1))
 	CONTENT="`head -n $TLINE $EVENT | tail -n 1`"
-#find position of the comment in the end of the line
+	#find position of the comment in the end of the line
 	POS=`echo "$CONTENT" | grep -bo -m 1 '/\*.*\*/$' | cut -d : -f 1`
 	#get the comment
 	COMMENT=${CONTENT:$POS}
@@ -458,6 +465,7 @@ function flashback_run()
 	CUR_BINLOG_FULL=
 	#if dest is another table, get current binlog position
 	if [ "$TABLE_NAME" != "$NEW_TABLE_NAME" ]; then
+		write_log "Getting current binary log sequence and position"
 		CUR_BINLOG_FULL=`binlog_get_current_master_binlog` || { rm $PK_LIST; return 1; }
 		CUR_BINLOG_SEQ=`echo $CUR_BINLOG_FULL | cut -d : -f 1`
 		CUR_BINLOG_POS=`echo $CUR_BINLOG_FULL | cut -d : -f 2`
@@ -476,7 +484,7 @@ function flashback_run()
 	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "desc $FQ_TABLE_NAME" | sed -e 's/\t.*//' >$COL_FILE || { rm $COL_FILE $PK_LIST; return 1; }
 	COL_COUNT=`wc -l $COL_FILE | cut -d \  -f 1`
 	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $COL_FILE $PK_LIST; return 1; }
-	if [ "$DEBUG" -eq "1" ]; then
+	if [ "$DEBUG" == "1" ]; then
 		echo "SQL directory: $SQL_DIR"
 	fi
 	read_binlogs || { rm $COL_FILE; rm -fr $PK_LIST $SQL_DIR; return 1; }
@@ -484,7 +492,7 @@ function flashback_run()
 	RC=$?
 	rm $COL_FILE $PK_LIST
 
-	if [ "$DEBUG" -ne "1" ]; then
+	if [ "$DEBUG" != "1" ]; then
 		rm -fr $SQL_DIR
 	fi
 	return $RC
