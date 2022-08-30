@@ -174,7 +174,9 @@ function parse_one_event()
 	[ -f $SQL ] || return 1
 	TAIL=$((SQL_LINE_COUNT-START_LINE+1))
 	#look for statement end mark
-	EFF_START_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^#.*STMT_END_F$' | cut -d : -f 1`
+	STMT_END_FULL_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^#.*STMT_END_F$'`
+	BINLOG_POS=`echo $STMT_END_FULL_LINE | cut -d \  -f 7`
+	EFF_START_LINE=`echo $STMT_END_FULL_LINE | cut -d : -f 1`
 	EFF_START_LINE=$((EFF_START_LINE+START_LINE))
 	TAIL=$((SQL_LINE_COUNT-EFF_START_LINE+1))
 	END_LINE=`tail -n $TAIL $SQL | grep -n -m 1 '^# at ' | cut -d : -f 1`
@@ -262,9 +264,10 @@ function read_one_binlog()
 
 	#if we have a binlog seq/pos to stop, request it
 	STOP_OPT=
+	LONG_SEQ=`echo $F | cut -d . -f 2`
+	SHORT_SEQ=`expr $LONG_SEQ + 0`
+	BINLOG_SEQ=$SHORT_SEQ
 	if [ -n "$CUR_BINLOG_FULL" ]; then
-		LONG_SEQ=`echo $F | cut -d . -f 2`
-		SHORT_SEQ=`expr $LONG_SEQ + 0`
 		if [ $CUR_BINLOG_SEQ -eq $SHORT_SEQ ]; then
 			STOP_OPT=--stop-position=$CUR_BINLOG_POS
 		fi
@@ -422,8 +425,7 @@ function revert_sql_cmds()
 	LINES_LINE_COUNT=`wc -l $LINE_LIST | awk '{ print $1; }'`
 	SQL_LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
 	for I in `seq 1 $PROCESS_THREADS`; do
-		#revert_sql_cmds_th $I &
-		revert_sql_cmds_th $I || { rm $LINE_LIST; return 1; }
+		revert_sql_cmds_th $I &
 	done
 	wait
 	rm $LINE_LIST
@@ -500,7 +502,9 @@ function flashback_run()
 
 function write_sql()
 {
-	F=`printf %07d.sql $EVENT_NUM`
+	local F
+	local FF
+	F=`printf %06d.%08d.sql $BINLOG_SEQ $BINLOG_POS`
 	FF=$SQL_DIR/$F
 	echo "$CMD;" >>$FF
 }

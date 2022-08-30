@@ -34,7 +34,6 @@ function backup()
 		return 1
 	fi
 
-	TARGET_CRED_OPT=`mount_target_credentials_opt`
 	ERR_LOG=`mktemp /tmp/myfreerman.XXXXXX`
 	mysqladmin --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT status >/dev/null 2>$ERR_LOG
 	RC=$?
@@ -359,7 +358,7 @@ function help_flashback()
 
 function help_flashback_table()
 {
-	echo "* Flashback a table to a specific moment in the past"
+	echo "* Flashback a table to a specific moment in the past. Multithreading is supported - number of threads is set in 'process_threads' config"
 	echo "	flashback table <database>.<table>[:<new table name>] <timestamp>"
 	echo "	   database: database that has the table"
 	echo "	   table: table name"
@@ -1082,7 +1081,7 @@ function get_server_config()
 	CONFIG_NAME=$1
 	CMD="select @@${CONFIG_NAME}\G"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT_NOPWD -e "$CMD" >$BUFF || { rm $BUFF; return 1; }
+	mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" >$BUFF || { rm $BUFF; return 1; }
 	RC=$?
 	tail -n 1 $BUFF
 	rm $BUFF
@@ -1978,7 +1977,7 @@ function list_remote()
 function list_server_binlogs()
 {
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT_NOPWD -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
 	cat $LIST_FILE
 	rm $LIST_FILE
 }
@@ -2049,18 +2048,6 @@ function mount_stop_slave_command()
 }
 
 function mount_target_credentials_opt()
-{
-	RESULT=
-	if [ -n "$DB_USERNAME" ]; then
-		RESULT="$RESULT --user=$DB_USERNAME"
-	fi
-	if [ -n "$DB_PASSWORD" ]; then
-		RESULT="$RESULT --password=$DB_PASSWORD"
-	fi
-	echo -n "$RESULT"
-}
-
-function mount_target_credentials_opt_nopwd()
 {
 	RESULT=
 	if [ -n "$DB_USERNAME" ]; then
@@ -3247,7 +3234,6 @@ function run()
 	fi
 	SLAVE=0
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
-	TARGET_CRED_OPT_NOPWD=`mount_target_credentials_opt_nopwd` || return 1
 
 	#if password in config, set env
 	if [ -n "$DB_PASSWORD" ]; then
