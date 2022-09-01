@@ -63,7 +63,7 @@ function initialize()
 
 	write_out "Starting transaction"
 	CMD="start transaction;"
-	mysql_send_command "$CMD"
+	mysql_send_command "$CMD" || return 1
 
 	write_out "Disabling FK checks"
 	CMD="set foreign_key_checks = off;"
@@ -97,8 +97,11 @@ function exec_sqls()
 	write_out "Running flashback script"
 	for F in `ls -r $SQL_DIR`; do
 		FF=$SQL_DIR/$F
+		#get number of lines, to calculate sleep time
+		COUNT=`wc -l $FF | awk '{print $1;}'`
+		SLEEP_TIME=`echo $COUNT \* 0.1 | bc`
 		cat $FF >&5 || return 1
-		sleep 1
+		sleep $SLEEP_TIME
 	done
 	CMD="commit;"
 	mysql_send_command "$CMD"
@@ -166,7 +169,7 @@ function mysql_send_command()
 {
 	CMD="$1"
 	echo "$CMD" >&5 || return 1
-	sleep 1
+	sleep 0.2
 }
 
 function parse_one_event()
@@ -243,6 +246,15 @@ function read_binlogs()
 		F="binlog.${LSEQ}.gz"
 		FF="$BINLOG_BACKUP_DIR/$F"
 	done
+}
+
+function mysql_read_prompt()
+{
+	while read -r LINE; do
+		if [ "${LINE:0:6}" == "Query " ]; then
+			break
+		fi
+	done <$MYSQL_IN_PIPE
 }
 
 function read_one_binlog()
