@@ -1744,7 +1744,7 @@ function init_database()
 	echo "alter user root@localhost identified by '$NEW_PASSWORD';" >>$SQL
 	echo "update mysql.user set host = '%' where user = 'root' and host = 'localhost';" >>$SQL
 	echo "flush privileges;" >>$SQL
-	echo "grant backup_admin on *.* to root;" >>$SQL
+	echo "grant resource_group_admin, backup_admin on *.* to root;" >>$SQL
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	mysql --connect-expired-password --socket="$SOCKET" -u root "-p$PASSWORD" <$SQL
 	mysql_stop
