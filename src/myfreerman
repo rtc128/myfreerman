@@ -1868,6 +1868,9 @@ function list()
 		binlog)
 			list_binlog || return 1
 			;;
+		transactions)
+			list_transactions $* || return 1
+			;;
 		*)
 			help_list
 			return 1
@@ -1980,6 +1983,39 @@ function list_server_binlogs()
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
 	cat $LIST_FILE
 	rm $LIST_FILE
+}
+
+function list_transactions()
+{
+	MINUTES=
+	DETAILED=0
+	START_TIME=
+	END_TIME=
+	local OPTIND l_opt
+	while getopts "hm:s:e:" l_opt; do
+		case $l_opt in
+			h)
+				help_list_events
+				return
+				;;
+			m)
+				MINUTES=$OPTARG;;
+			s)
+				START_TIME=$OPTARG;;
+			e)
+				END_TIME=$OPTARG;;
+			\?)
+				help_list_events
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 0 ]; then
+		help_list_transactions
+		return 1
+	fi
+	binlog_do_list_transactions || return 1
 }
 
 function load_modules()
