@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.1.11
+RELEASE=2.2.0
 
 function backup()
 {
@@ -463,6 +463,31 @@ function help_list_events
    echo "     	   <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
 
+}
+
+function help_list_transactions
+{
+	echo "* List transactions from binary logs"
+	echo "   list transactions [ -h ] [ -m <min> ] [ -s <timestamp> ] [ -e <timestamp> ]"
+	echo "      Output table contains the following colums: transaction start time, <insert>, <update>, <delete>, <total>"
+	echo "         insert: number of rows affected by INSERT commands"
+	echo "         update: number of rows affected by UPDATE commands"
+	echo "         delete: number of rows affected by DELETE commands"
+	echo "         total: total number of rows affected (insert+update+delete)"
+	echo "      Number of threads to use is defined in PROCESS_THREADS config."
+	echo "      Minimum params are -s or -m"
+	echo "      -h: Show this help"
+	echo "      -m: List transactions executed in the last <min> minutes"
+	echo "         Cannot be used with -s or -e"
+	echo "      -e: List transactions executed before <timestamp>"
+   echo "     	   Require -s option"
+	echo "         Cannot be used with -m"
+   echo "     	   <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
+   echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+	echo "      -s: List transactions executed after <timestamp>"
+	echo "         Cannot be used with -m"
+   echo "     	   <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
+   echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
 }
 
 function binlog_backup_exists()
@@ -1995,7 +2020,7 @@ function list_transactions()
 	while getopts "hm:s:e:" l_opt; do
 		case $l_opt in
 			h)
-				help_list_events
+				help_list_transactions
 				return
 				;;
 			m)
@@ -2005,7 +2030,7 @@ function list_transactions()
 			e)
 				END_TIME=$OPTARG;;
 			\?)
-				help_list_events
+				help_list_transactions
 				return 1
 				;;
 		esac
