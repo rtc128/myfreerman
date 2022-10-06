@@ -48,12 +48,12 @@ function binlog_do_list_transactions()
 	_list_transactions_validate_params || return 1
 
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
-	_list_local_transactions "$START_TIME" $OUTPUT
+	_list_local_transactions
 	if [ $? -eq 1 ]; then
 		return 1
 	fi
 	if [ $? -ne 100 ]; then
-		_list_backup_transactions "$START_TIME" $OUTPUT || return 1
+		_list_backup_transactions || return 1
 	fi
 	sort $OUTPUT
 	rm $OUTPUT
@@ -99,8 +99,8 @@ function _list_backup_events()
 
 function _list_backup_transactions()
 {
-	MIN_DATE="$1"
-	OUTPUT="$2"
+	MIN_DATE="$START_TIME"
+
 	#if backup binlog dir doesn't exist, list empty
 	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
 		return
@@ -113,7 +113,7 @@ function _list_backup_transactions()
 			SEQ=`echo $F | cut -d . -f 2`
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
-			_list_one_binlog_transactions "${BINLOG}" "$MIN_DATE" "$OUTPUT"
+			_list_one_binlog_transactions ${BINLOG}
 			RC=$?
 			rm $BINLOG
 			if [ $RC -eq 100 ]; then
@@ -123,7 +123,7 @@ function _list_backup_transactions()
 		fi
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
-			_list_one_binlog_transactions "${FPATH}" "$MIN_DATE" "$OUTPUT"
+			_list_one_binlog_transactions "${FPATH}"
 			if [ $? -eq 100 ]; then
 				break
 			fi
@@ -230,9 +230,6 @@ function _list_local_events()
 
 function _list_local_transactions()
 {
-	START_TIME="$1"
-	OUTPUT="$2"
-
 	#check if server has binary logs
 	LOG_BIN=`get_server_config log_bin` || return 1
 	[ -n "$LOG_BIN" ] || return 1
@@ -254,7 +251,7 @@ function _list_local_transactions()
 	for i in `seq 1 $COUNT`; do
 		NAME=`tail -n $i $BINLOG_LIST | head -n 1`
 		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
-		_list_one_binlog_transactions "${FULL_NAME}" "$START_TIME" "$OUTPUT"
+		_list_one_binlog_transactions "${FULL_NAME}"
 		if [ $? -eq 100 ]; then
 			rm $BINLOG_LIST
 			return 100
@@ -324,8 +321,6 @@ function _list_one_binlog_events()
 function _list_one_binlog_transactions()
 {
 	FULL_PATH="$1"
-	START_TIME="$2"
-	OUTPUT="$3"
 
 	#if binlog does not exist, just ignore it because probably binlogs were flushed
 	if ! [ -f "$FULL_PATH" ]; then
@@ -474,31 +469,63 @@ function _list_one_binlog_transactions_th()
 		TXN=`mktemp /tmp/myfreerman.XXXXXX`
 		tail -n $TCOUNT $SQL | head -n $COMMIT_LINE >$TXN
 
-		INS_COUNT=0
-		UPD_COUNT=0
-		DEL_COUNT=0
+		TOTAL=0
+
+		declare -A INS_TAB
+		declare -A UPD_TAB
+		declare -A DEL_TAB
 
 		#for each line
 		while IFS= read -r LINE; do
 			#INSERT?
 			if [[ "$LINE" =~ "### INSERT ".* ]]; then
-				((INS_COUNT++))
+				((TOTAL++))
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+				TABLE_NAME=${TABLE_NAME//\`/}
+
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+				 	INS_TAB[$TABLE_NAME]=1
+				else
+					INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
+				fi
 			fi
 			#UPDATE?
 			if [[ "$LINE" =~ "### UPDATE ".* ]]; then
-				((UPD_COUNT++))
+				((TOTAL++))
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 3`
+				TABLE_NAME=${TABLE_NAME//\`/}
+
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+				 	UPD_TAB[$TABLE_NAME]=1
+				else
+					UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
+				fi
 			fi
 			#DELETE?
 			if [[ "$LINE" =~ "### DELETE ".* ]]; then
-				((DEL_COUNT++))
+				((TOTAL++))
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+				TABLE_NAME=${TABLE_NAME//\`/}
+
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+				 	DEL_TAB[$TABLE_NAME]=1
+				else
+					DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
+				fi
 			fi
 		done <$TXN
 		if [ "$DEBUG" != "1" ]; then
 			rm $TXN
 		fi
 
-		TOTAL=$((INS_COUNT+UPD_COUNT+DEL_COUNT))
-		printf "%-12s %-7s %-7s %-7s %-7s\n" $TIMESTAMP $INS_COUNT $UPD_COUNT $DEL_COUNT $TOTAL >>"$OUTPUT"
+		T_DATA=
+		for TABLE in "${!INS_TAB[@]}"; do
+			T_DATA="${T_DATA}${TABLE}:${INS_TAB[$TABLE]},${UPD_TAB[$TABLE]},${DEL_TAB[$TABLE]};"
+		done
+		printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA >>"$OUTPUT"
 		((LINES_START_LINE++))
 	done
 }
@@ -609,11 +636,11 @@ function _list_transactions_validate_params()
 			return 1
 		fi
 		if [ -n "$START_TIME" ]; then
-			write_out "'Start time' and 'minutes' cannot be informed together"
+			write_out "'Start time' and 'minutes' cannot be used together"
 			return 1
 		fi
 		if [ -n "$END_TIME" ]; then
-			write_out "'End time' and 'minutes' cannot be informed together"
+			write_out "'End time' and 'minutes' cannot be used together"
 			return 1
 		fi
 		START_TIME=`date --date="-$MINUTES minutes" +"%F %T"`
