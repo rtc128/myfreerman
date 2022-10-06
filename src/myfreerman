@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.2.0
+RELEASE=2.2.1
 
 function backup()
 {
@@ -469,11 +469,9 @@ function help_list_transactions
 {
 	echo "* List transactions from binary logs"
 	echo "   list transactions [ -h ] [ -m <min> ] [ -s <timestamp> ] [ -e <timestamp> ]"
-	echo "      Output table contains the following colums: transaction start time, <insert>, <update>, <delete>, <total>"
-	echo "         insert: number of rows affected by INSERT commands"
-	echo "         update: number of rows affected by UPDATE commands"
-	echo "         delete: number of rows affected by DELETE commands"
-	echo "         total: total number of rows affected (insert+update+delete)"
+	echo "      Output table contains the following colums: transaction start time, <total>, <table details>"
+	echo "         total: total number of rows affected by the transaction"
+	echo "         table details: list of each table affected, followed by number of INSERTs, UPDATEs and DELETEs on the table"
 	echo "      Number of threads to use is defined in PROCESS_THREADS config."
 	echo "      Minimum params are -s or -m"
 	echo "      -h: Show this help"
