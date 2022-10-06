@@ -366,10 +366,35 @@ function _list_one_binlog_transactions()
 	done
 	wait
 
+	RETCODE=0
+	#if first event in binlog is before our 'start time', return 100
+	#indicating to stop execution
+	if [ -n "$START_TIME" ]; then
+		if [ -n "$END_TIME" ]; then
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --stop-datetime="$END_TIME" --result-file=$SQL "$FULL_PATH"
+		else
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
+		fi
+		LINE="`head -n 20 $SQL | grep -w 'server id' | head -n 1`"
+		AUX_DT=`echo $LINE | cut -d \  -f 1`
+		AUX_DAY=${AUX_DT:5:2}
+		AUX_MON=${AUX_DT:3:2}
+		AUX_YEAR="20${AUX_DT:1:2}"
+
+		AUX_FMT_DT="${AUX_YEAR}-${AUX_MON}-${AUX_DAY}"
+		AUX_FMT_TIME=`echo $LINE | cut -d \  -f 2`
+		AUX_FMT_FULL_TIMESTAMP="${AUX_FMT_DT} ${AUX_FMT_TIME}"
+
+		if [[ "$AUX_FMT_FULL_TIMESTAMP" < "$START_TIME" ]]; then
+			RETCODE=100
+		fi
+	fi
+
 	if [ "$DEBUG" != "1" ]; then
 		rm $LINE_LIST
 		rm $SQL
 	fi
+	return $RETCODE
 }
 
 function _list_one_binlog_events_th()
