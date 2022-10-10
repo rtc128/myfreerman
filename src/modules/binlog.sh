@@ -23,6 +23,8 @@ function binlog_do_list_events()
 {
 	_list_events_validate_params || return 1
 
+	lock_binlog_lock || return 1
+
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
 	if [ -n "$BINLOG_FILE" ]; then
 		if [ $DETAILED -eq 1 ]; then
@@ -46,12 +48,14 @@ function binlog_do_list_events()
 function binlog_do_list_transactions()
 {
 	_list_transactions_validate_params || return 1
+	lock_binlog_lock || return 1
 
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
 	_list_local_transactions
 	if [ $? -eq 1 ]; then
 		return 1
 	fi
+	lock_binlog_unlock || return 1
 	if [ $? -ne 100 ]; then
 		_list_backup_transactions || return 1
 	fi
@@ -322,15 +326,10 @@ function _list_one_binlog_transactions()
 {
 	FULL_PATH="$1"
 
-	#if binlog does not exist, just ignore it because probably binlogs were flushed
-	if ! [ -f "$FULL_PATH" ]; then
-		return
-	fi
-
 	#sequence is the last 6 chars in binlog path
 	SEQ=${FULL_PATH:(-6)}
 
-	local SQL=`mktemp /tmp/myfreerman.XXXXXX`
+	SQL=`mktemp /tmp/myfreerman.XXXXXX`
 
 	if [ -n "$START_TIME" ]; then
 		#list only marks
@@ -342,26 +341,21 @@ function _list_one_binlog_transactions()
 	else
 		mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
 	fi
+	SQL_TOTAL_LINES=`wc -l $SQL | awk '{ print $1; }'`
 
-	local LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX`
 	grep -n '^BEGIN$' $SQL | cut -d : -f 1 >$LINE_LIST
-	TOTAL_LINES=`wc -l $LINE_LIST | cut -d \  -f 1`
+	LINES_TOTAL_LINES=`wc -l $LINE_LIST | awk '{ print $1; }'`
 
-	#if mark list is empty, inform we are already before min date
-	if [ $TOTAL_LINES -eq 0 ]; then
-		rm $LINE_LIST
-		return 100
-	fi
-
-	TH_LINE_COUNT=$((TOTAL_LINES/PROCESS_THREADS))
+	TH_LINE_COUNT=$((LINES_TOTAL_LINES/PROCESS_THREADS))
 	#if not exact division, add one line for each thread
-	if [ $(expr $TOTAL_LINES % $PROCESS_THREADS) != "0" ]; then
+	if [ $(expr $LINES_TOTAL_LINES % $PROCESS_THREADS) != "0" ]; then
 		((TH_LINE_COUNT++))
 	fi
 
 	START_LINE=1
 	for I in `seq 1 $PROCESS_THREADS`; do
-		_list_one_binlog_transactions_th $LINE_LIST $SQL $START_LINE $TH_LINE_COUNT "$OUTPUT" &
+		_list_one_binlog_transactions_th $START_LINE &
 		START_LINE=$((START_LINE+TH_LINE_COUNT))
 	done
 	wait
@@ -376,17 +370,20 @@ function _list_one_binlog_transactions()
 			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
 		fi
 		LINE="`head -n 20 $SQL | grep -w 'server id' | head -n 1`"
-		AUX_DT=`echo $LINE | cut -d \  -f 1`
-		AUX_DAY=${AUX_DT:5:2}
-		AUX_MON=${AUX_DT:3:2}
-		AUX_YEAR="20${AUX_DT:1:2}"
+		#continue checking only if at least one line is found
+		if [ -n "$LINE" ]; then
+			AUX_DT=`echo $LINE | cut -d \  -f 1`
+			AUX_DAY=${AUX_DT:5:2}
+			AUX_MON=${AUX_DT:3:2}
+			AUX_YEAR="20${AUX_DT:1:2}"
 
-		AUX_FMT_DT="${AUX_YEAR}-${AUX_MON}-${AUX_DAY}"
-		AUX_FMT_TIME=`echo $LINE | cut -d \  -f 2`
-		AUX_FMT_FULL_TIMESTAMP="${AUX_FMT_DT} ${AUX_FMT_TIME}"
+			AUX_FMT_DT="${AUX_YEAR}-${AUX_MON}-${AUX_DAY}"
+			AUX_FMT_TIME=`echo $LINE | cut -d \  -f 2`
+			AUX_FMT_FULL_TIMESTAMP="${AUX_FMT_DT} ${AUX_FMT_TIME}"
 
-		if [[ "$AUX_FMT_FULL_TIMESTAMP" < "$START_TIME" ]]; then
-			RETCODE=100
+			if [[ "$AUX_FMT_FULL_TIMESTAMP" < "$START_TIME" ]]; then
+				RETCODE=100
+			fi
 		fi
 	fi
 
@@ -462,20 +459,26 @@ function _list_one_binlog_events_th()
 
 function _list_one_binlog_transactions_th()
 {
-	local LINE_LIST=$1
-	local SQL=$2
-	local TH_START_LINE=$3
-	local TH_LINE_COUNT=$4
-	local OUTPUT=$5
-
-	local INS_COUNT
-	local UPD_COUNT
-	local DEL_COUNT
+	local COMMIT_LINE
+	local DEL
+	local INS
+	local LINES_START_LINE
+	local SQL_CUR_LINE
+	local TABLE_NAME
+	local TH_START_LINE
+	local TIMESTAMP
+	local TXN
+	local T_DATA
+	local TABLE
 	local TOTAL
+	local UPD
 	
-	local LINES_TOTAL_LINES=`wc -l $LINE_LIST | awk '{ print $1; }'`
-	local SQL_TOTAL_LINES=`wc -l $SQL | awk '{ print $1; }'`
-	local LINES_START_LINE=$TH_START_LINE
+		declare -A INS_TAB
+		declare -A UPD_TAB
+		declare -A DEL_TAB
+
+	TH_START_LINE=$1
+	LINES_START_LINE=$TH_START_LINE
 
 	for I in `seq 1 $TH_LINE_COUNT`; do
 		#if our first line is greater than total number of lines of the file, just ignore it
@@ -484,21 +487,18 @@ function _list_one_binlog_transactions_th()
 		fi
 
 		SQL_CUR_LINE=`head -n $LINES_START_LINE $LINE_LIST | tail -n 1`
-		TCOUNT=`expr $SQL_TOTAL_LINES - $SQL_CUR_LINE + 1`
-		COMMIT_LINE=`tail -n $TCOUNT $SQL | grep -nwi -m 1 ^commit | cut -d : -f 1`
+		COMMIT_LINE=`tail -n +${SQL_CUR_LINE} $SQL | grep -nwi -m 1 ^commit | cut -d : -f 1`
 
 		#timestamp is in the last line with "at" before the line with "BEGIN"
-		TIMESTAMP=`head -n $SQL_CUR_LINE $SQL | tail -n 6 | grep -A 1 -w at | tail -n 1 | cut -d \  -f 2`
-		#TIMESTAMP=`head -n $SQL_CUR_LINE $SQL | tail -n 4 | head -n 1 | cut -d \  -f 2`
+		TIMESTAMP=`head -n $SQL_CUR_LINE $SQL | tail -n 20 | grep -A 1 -w at | tail -n 1 | cut -d \  -f 2`
 
 		TXN=`mktemp /tmp/myfreerman.XXXXXX`
-		tail -n $TCOUNT $SQL | head -n $COMMIT_LINE >$TXN
+		tail -n +${SQL_CUR_LINE} $SQL | head -n $COMMIT_LINE >$TXN
 
 		TOTAL=0
-
-		declare -A INS_TAB
-		declare -A UPD_TAB
-		declare -A DEL_TAB
+		INS_TAB=()
+		UPD_TAB=()
+		DEL_TAB=()
 
 		#for each line
 		while IFS= read -r LINE; do
@@ -514,6 +514,13 @@ function _list_one_binlog_transactions_th()
 				else
 					INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
 				fi
+
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+					UPD_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+					DEL_TAB[$TABLE_NAME]=0
+				fi
 			fi
 			#UPDATE?
 			if [[ "$LINE" =~ "### UPDATE ".* ]]; then
@@ -526,6 +533,13 @@ function _list_one_binlog_transactions_th()
 				 	UPD_TAB[$TABLE_NAME]=1
 				else
 					UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
+				fi
+
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+					INS_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+					DEL_TAB[$TABLE_NAME]=0
 				fi
 			fi
 			#DELETE?
@@ -540,6 +554,13 @@ function _list_one_binlog_transactions_th()
 				else
 					DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
 				fi
+
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+					INS_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+					UPD_TAB[$TABLE_NAME]=0
+				fi
 			fi
 		done <$TXN
 		if [ "$DEBUG" != "1" ]; then
@@ -548,7 +569,10 @@ function _list_one_binlog_transactions_th()
 
 		T_DATA=
 		for TABLE in "${!INS_TAB[@]}"; do
-			T_DATA="${T_DATA}${TABLE}:${INS_TAB[$TABLE]},${UPD_TAB[$TABLE]},${DEL_TAB[$TABLE]};"
+			INS="${INS_TAB[$TABLE]}"
+			UPD="${UPD_TAB[$TABLE]}"
+			DEL="${DEL_TAB[$TABLE]}"
+			T_DATA="${T_DATA}${TABLE}:${INS},${UPD},${DEL};"
 		done
 		printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA >>"$OUTPUT"
 		((LINES_START_LINE++))

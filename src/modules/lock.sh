@@ -1,3 +1,5 @@
+BINLOG_LOCKED=0
+
 function lock_binlog_lock()
 {
 	LOCK_FILE="$WORKING_DIR/binlog.lock"
@@ -19,4 +21,11 @@ function lock_binlog_lock()
 		done
 		touch "$LOCK_FILE" || return 1
 	fi
+	BINLOG_LOCKED=1
+}
+
+function lock_binlog_unlock()
+{
+	LOCK_FILE="$WORKING_DIR/binlog.lock"
+	[ -f "$LOCK_FILE" -a $BINLOG_LOCKED -eq 1 ] && rm "$LOCK_FILE"
 }

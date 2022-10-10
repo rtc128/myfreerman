@@ -55,9 +55,7 @@ function backup()
 			backup_full $* || return 1
 			;;
 		binlog)
-			check_lock_file
-			backup_binlog $* || { remove_lock_file; return 1; }
-			remove_lock_file
+			backup_binlog $* || { return 1; }
 			;;
 		*)
 			echo "Invalid backup type '$BKP_TYPE'" >&2
@@ -88,11 +86,12 @@ function backup_binlog()
 		help_backup_binlog
 		return 1
 	fi
-	check_config_backup_binlog || return 1
 	if ! exist_base_backup; then
 		write_out "No full backup was previously done"
 		return 1
 	fi
+
+	lock_binlog_lock || return 1
 
 	#create binlog backup dir
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
@@ -118,9 +117,9 @@ function backup_binlog()
 
 	#list binlogs, just ignoring the last one
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { return 1; }
 			
-	TOTAL=`cat $LIST_FILE | wc -l` || { remove_lock_file && return 1; }
+	TOTAL=`cat $LIST_FILE | wc -l` || { return 1; }
 	COUNT=$((TOTAL - 1))
 	LIST=`head -n $COUNT $LIST_FILE`
 	LAST_BINLOG=`tail -n 1 $LIST_FILE`
@@ -136,19 +135,18 @@ function backup_binlog()
 			gzip -c9 "$BINLOG_DIR/$BINLOG" >"$TMP_OUT" 2>$ERR_LOG
 			RC=$?
 			write_file_out $ERR_LOG
-			[ $RC -eq 0 ] || { rm $ERR_LOG; remove_lock_file; return 1; }
+			[ $RC -eq 0 ] || { rm $ERR_LOG; return 1; }
 
 			#rename tmp to final
 			mv "$TMP_OUT" "$BKP" 2>$ERR_LOG
 			RC=$?
 			write_file_out $ERR_LOG
-			[ $RC -eq 0 ] || { rm $ERR_LOG; remove_lock_file; return 1; }
+			[ $RC -eq 0 ] || { rm $ERR_LOG; return 1; }
 		fi
 	done
 	rm $ERR_LOG
-	check_purge_binlogs $LAST_BINLOG || { remove_lock_file && return 1; }
+	check_purge_binlogs $LAST_BINLOG || { return 1; }
 	remove_tmp_binlog_backups
-	remove_lock_file
 }
 
 function backup_full()
@@ -230,14 +228,15 @@ function do_apply_binlog()
 	BASE_BACKUP="$2"
 	TARGET_CRED_OPT=`mount_target_credentials_opt`
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
-		VALIDATED=`crudini --get "$WORKING_FILE" recovery validated` 2>/dev/null
+		FPATH="$WORKING_DIR/restore.ini"
+		VALIDATED=`crudini --get "$FPATH" recovery validated` 2>/dev/null
 		if [ "$VALIDATED" != "1" ]; then
 			write_out "No previous restore done -- aborting"
 			return 1
 		fi
-		REQ_TIMESTAMP_NO_SPACE=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
+		REQ_TIMESTAMP_NO_SPACE=`crudini --get "$FPATH" recovery requested_timestamp 2>/dev/null`
 		REQ_TIMESTAMP="${REQ_TIMESTAMP_NO_SPACE/_/ }"
-		BASE_BACKUP=`crudini --get "$WORKING_FILE" recovery base_backup 2>/dev/null`
+		BASE_BACKUP=`crudini --get "$FPATH" recovery base_backup 2>/dev/null`
 		if [ -z "$BASE_BACKUP" ]; then
 			write_out "Cannot find base backup in working file!!!"
 			return 1
@@ -282,10 +281,11 @@ function do_apply_binlog()
 		LOGSEQ=`expr $LOGSEQ + 1`
 		POSITION=0
 		FIRST=0
-		crudini --del "$WORKING_FILE" recovery base_backup 2>/dev/null
-		crudini --del "$WORKING_FILE" recovery restore_time 2>/dev/null
-		crudini --del "$WORKING_FILE" recovery requested_timestamp 2>/dev/null
-		crudini --del "$WORKING_FILE" recovery validated 2>/dev/null
+		FPATH="$WORKING_DIR/restore.ini"
+		crudini --del "$FPATH" recovery base_backup 2>/dev/null
+		crudini --del "$FPATH" recovery restore_time 2>/dev/null
+		crudini --del "$FPATH" recovery requested_timestamp 2>/dev/null
+		crudini --del "$FPATH" recovery validated 2>/dev/null
 	done
 	rm $TMP_SQL $ERR_LOG
 }
@@ -631,15 +631,6 @@ function check_config_backup()
 
 }
 
-function check_config_backup_binlog()
-{
-	#LOCK_FILE - required
-	if [ -z "$LOCK_FILE" ]; then
-		echo "Configuration 'lock_file' is required" >&2
-		return 1
-	fi
-}
-
 function check_config_list()
 {
 	if [ -z "$LIST_REMOTE_HOST" ]; then
@@ -694,28 +685,6 @@ function check_empty_target_database()
 	if [ -n "$RELAY_LOG_INDEX" -a -f "$RELAY_LOG_INDEX" ]; then
 		write_out "Relay log index [$RELAY_LOG_INDEX] must not exist"
 		return 1
-	fi
-}
-
-function check_lock_file()
-{
-	MAX_WAIT_TIME_MIN=10
-	SLEEP_TIME=15
-
-	MAX_WAIT_TIME_SEC=`expr $MAX_WAIT_TIME_MIN \* 60`
-	TOT_WAIT_TIME=0
-
-	if [ -n "$LOCK_FILE" ]; then
-		while [ -f "$LOCK_FILE" ]; do
-			if [ $TOT_WAIT_TIME -ge $MAX_WAIT_TIME_SEC ]; then
-				write_out "Timeout reached waiting for another instance"
-				return 1
-			fi
-			write_out "Waiting for another instance - lock file: $LOCK_FILE"
-			sleep $SLEEP_TIME
-			TOT_WAIT_TIME=`expr $TOT_WAIT_TIME + $SLEEP_TIME`
-		done
-		touch "$LOCK_FILE" || return 1
 	fi
 }
 
@@ -1025,6 +994,11 @@ function drop_target_database()
 		rm -f "$RELAY_LOG_INDEX" || return 1
 	fi
 	rm -fr "$DATADIR/"* || return 1
+}
+
+function exiting()
+{
+	lock_binlog_unlock
 }
 
 function expand_logfile_path()
@@ -2003,7 +1977,7 @@ function list_remote()
 function list_server_binlogs()
 {
 	LIST_FILE=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { remove_lock_file && return 1; }
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show binary logs\G" | grep -wi log_name | cut -d \  -f 3 >$LIST_FILE || { return 1; }
 	cat $LIST_FILE
 	rm $LIST_FILE
 }
@@ -2326,9 +2300,6 @@ function read_rman_config()
 	#log directory
 	LOG_DIR="`crudini --get "$RMAN_CONFIG" $INI_SECTION log_dir 2>/dev/null`"
 
-	#lock file
-	LOCK_FILE="`crudini --get "$RMAN_CONFIG" $INI_SECTION lock_file 2>/dev/null`"
-
 	#max memory
 	MAX_MEM="`crudini --get "$RMAN_CONFIG" $INI_SECTION max_mem 2>/dev/null`"
 
@@ -2363,11 +2334,11 @@ function read_rman_config()
 	#slave server
 	SLAVE_SERVER="`crudini --get "$RMAN_CONFIG" $INI_SECTION slave_server 2>/dev/null`"
 
-	#working file
-	WORKING_FILE="`crudini --get "$RMAN_CONFIG" $INI_SECTION working_file 2>/dev/null`"
-	#default: /var/lib/mysql/myfreerman.work
-	if [ -z "$WORKING_FILE" ]; then
-		WORKING_FILE=/var/lib/mysql/myfreerman.work
+	#working dir
+	WORKING_DIR="`crudini --get "$RMAN_CONFIG" $INI_SECTION working_dir 2>/dev/null`"
+	#default: /var/lib/myfreerman
+	if [ -z "$WORKING_DIR" ]; then
+		WORKING_DIR=/var/lib/myfreerman
 	fi
 
 	#backup write threads
@@ -2468,13 +2439,14 @@ function apply_binlog()
 	CONFIG="$SERVER_CONFIG"
 
 	#if not validated, no restore was previously done
-	VAL=`crudini --get "$WORKING_FILE" recovery validated 2>/dev/null`
+	FPATH="$WORKING_DIR/restore.ini"
+	VAL=`crudini --get "$FPATH" recovery validated 2>/dev/null`
 	if [ "$VAL" != "1" ]; then
 		write_out "No previous restore done -- aborting"
 		return 1
 	fi
 
-	REQ_TIMESTAMP=`crudini --get "$WORKING_FILE" recovery requested_timestamp 2>/dev/null`
+	REQ_TIMESTAMP=`crudini --get "$FPATH" recovery requested_timestamp 2>/dev/null`
 	if [ -n "$REQ_TIMESTAMP" ]; then
 		ISO_REQ_TIMESTAMP="${REQ_TIMESTAMP/_/ }"
 		write_out "Requested timestamp: $ISO_REQ_TIMESTAMP"
@@ -2691,13 +2663,6 @@ function remove_expired_full_backups()
 		fi
 		PREV_BKP=$BKP
 	done
-}
-
-function remove_lock_file()
-{
-	if [ -n "$LOCK_FILE" ]; then
-		rm -f "$LOCK_FILE"
-	fi
 }
 
 function remove_tmp_binlog_backups()
@@ -2982,29 +2947,30 @@ function restore_database()
 		return
 	fi
 
+	FPATH="$WORKING_DIR/restore.ini"
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
 		TS=`date +%Y-%m-%d_%H-%M-%S`
 		#save restore time
-		if ! crudini --set "$WORKING_FILE" recovery restore_time $TS; then
-			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+		if ! crudini --set "$FPATH" recovery restore_time $TS; then
+			write_out "Cannot write to working file '$FPATH' -- please review 'working_dir' config"
 			return 1
 		fi
-		if ! crudini --set "$WORKING_FILE" recovery validated 1; then
-			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+		if ! crudini --set "$FPATH" recovery validated 1; then
+			write_out "Cannot write to working file '$FPATH' -- please review 'working_dir' config"
 			return 1
 		fi
 		#save requested timestamp
-		crudini --del "$WORKING_FILE" recovery requested_timestamp 2>/dev/null
+		crudini --del "$FPATH" recovery requested_timestamp 2>/dev/null
 		if [ -n "$REQ_TIMESTAMP" ]; then
 			REQ_TIMESTAMP_NO_SPACE=${REQ_TIMESTAMP/ /_}
-			if ! crudini --set "$WORKING_FILE" recovery requested_timestamp $REQ_TIMESTAMP_NO_SPACE; then
-				write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+			if ! crudini --set "$FPATH" recovery requested_timestamp $REQ_TIMESTAMP_NO_SPACE; then
+				write_out "Cannot write to working file '$FPATH' -- please review 'working_dir' config"
 				return 1
 			fi
 		fi
 		#save base backup
-		if ! crudini --set "$WORKING_FILE" recovery base_backup $BASE_BACKUP; then
-			write_out "Cannot write to working file '$WORKING_FILE' -- please review 'working_file' config"
+		if ! crudini --set "$FPATH" recovery base_backup $BASE_BACKUP; then
+			write_out "Cannot write to working file '$FPATH' -- please review 'working_dir' config"
 			return 1
 		fi
 	fi
@@ -3311,6 +3277,7 @@ function run()
 		MYSQL_DEFAULT_GROUP_SUFFIX="@$MYSQL_SID"
 	fi
 	load_modules || return 1
+	trap exiting EXIT
 	case $CMD in
 		apply)
 			apply $* || return 1
@@ -3395,7 +3362,8 @@ function reset_slave()
 
 function save_recovery_data()
 {
-	crudini --set "$WORKING_FILE" recovery restore_time "$REQ_TIMESTAMP"
+	FPATH="$WORKING_DIR/restore.ini"
+	crudini --set "$FPATH" recovery restore_time "$REQ_TIMESTAMP"
 }
 
 function start_slave()
