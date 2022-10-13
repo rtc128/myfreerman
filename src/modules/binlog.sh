@@ -52,11 +52,12 @@ function binlog_do_list_transactions()
 
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
 	_list_local_transactions
-	if [ $? -eq 1 ]; then
+	RETCODE=$?
+	if [ $RETCODE -eq 1 ]; then
 		return 1
 	fi
 	lock_binlog_unlock || return 1
-	if [ $? -ne 100 ]; then
+	if [ $RETCODE -ne 100 ]; then
 		_list_backup_transactions || return 1
 	fi
 	sort $OUTPUT
@@ -109,12 +110,14 @@ function _list_backup_transactions()
 	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
 		return
 	fi
-	LIST=`ls -r "$BINLOG_BACKUP_DIR"`
-	for F in $LIST; do
-		FPATH="$BINLOG_BACKUP_DIR/$F"
+
+	SEQ=$((FIRST_LOCAL_BINLOG_SEQ-1))
+	SEQ=`printf %06d $SEQ`
+	FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
+	while [ -f "$FPATH" ]; do
+		HANDLED=0
 		#if it is compressed, uncompress
 		if file "$FPATH" | grep -wi "compressed" >/dev/null; then
-			SEQ=`echo $F | cut -d . -f 2`
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
 			_list_one_binlog_transactions ${BINLOG}
@@ -123,7 +126,7 @@ function _list_backup_transactions()
 			if [ $RC -eq 100 ]; then
 				break
 			fi
-			continue
+			HANDLED=1
 		fi
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
@@ -131,11 +134,16 @@ function _list_backup_transactions()
 			if [ $? -eq 100 ]; then
 				break
 			fi
-			continue
+			HANDLED=1
 		fi
-		#unknown type
-		write_out "Not a binary log file [$FPATH]"
-		return 1
+		if [ $HANDLED -eq 0 ]; then
+			#unknown type
+			write_out "Not a binary log file [$FPATH]"
+			return 1
+		fi
+		((SEQ--))
+		SEQ=`printf %06d $SEQ`
+		FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
 	done
 }
 
@@ -260,6 +268,7 @@ function _list_local_transactions()
 			rm $BINLOG_LIST
 			return 100
 		fi
+		FIRST_LOCAL_BINLOG_SEQ=`echo $NAME | cut -d . -f 2`
 	done
 	rm $BINLOG_LIST
 }
@@ -326,50 +335,42 @@ function _list_one_binlog_transactions()
 {
 	FULL_PATH="$1"
 
-	#sequence is the last 6 chars in binlog path
-	SEQ=${FULL_PATH:(-6)}
-
-	SQL=`mktemp /tmp/myfreerman.XXXXXX`
+	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
 
 	if [ -n "$START_TIME" ]; then
 		#list only marks
 		if [ -n "$END_TIME" ]; then
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --stop-datetime="$END_TIME" --result-file=$SQL "$FULL_PATH"
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --stop-datetime="$END_TIME" --result-file=$TMP_SQL "$FULL_PATH"
 		else
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --result-file=$SQL "$FULL_PATH"
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --result-file=$TMP_SQL "$FULL_PATH"
 		fi
 	else
 		mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
 	fi
-	SQL_TOTAL_LINES=`wc -l $SQL | awk '{ print $1; }'`
 
-	LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX`
-	grep -n '^BEGIN$' $SQL | cut -d : -f 1 >$LINE_LIST
-	LINES_TOTAL_LINES=`wc -l $LINE_LIST | awk '{ print $1; }'`
+	#create directory for each single transaction
+	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $TMP_SQL; return 1; }
+	_split_sql_transactions || { rm $TMP_SQL; rm -fr $SQL_DIR; return 1; }
+	rm $TMP_SQL
 
-	TH_LINE_COUNT=$((LINES_TOTAL_LINES/PROCESS_THREADS))
-	#if not exact division, add one line for each thread
-	if [ $(expr $LINES_TOTAL_LINES % $PROCESS_THREADS) != "0" ]; then
-		((TH_LINE_COUNT++))
-	fi
-
-	START_LINE=1
 	for I in `seq 1 $PROCESS_THREADS`; do
-		_list_one_binlog_transactions_th $START_LINE &
-		START_LINE=$((START_LINE+TH_LINE_COUNT))
+		_list_one_binlog_transactions_th $I &
 	done
 	wait
 
+	if [ "$DEBUG" != "1" ]; then
+		rm -fr $SQL_DIR
+	fi
 	RETCODE=0
 	#if first event in binlog is before our 'start time', return 100
 	#indicating to stop execution
 	if [ -n "$START_TIME" ]; then
 		if [ -n "$END_TIME" ]; then
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --stop-datetime="$END_TIME" --result-file=$SQL "$FULL_PATH"
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --stop-datetime="$END_TIME" --result-file=$TMP_SQL "$FULL_PATH"
 		else
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
+			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$TMP_SQL "$FULL_PATH"
 		fi
-		LINE="`head -n 20 $SQL | grep -w 'server id' | head -n 1`"
+		LINE="`head -n 20 $TMP_SQL | grep -w 'server id' | head -n 1`"
 		#continue checking only if at least one line is found
 		if [ -n "$LINE" ]; then
 			AUX_DT=`echo $LINE | cut -d \  -f 1`
@@ -386,11 +387,8 @@ function _list_one_binlog_transactions()
 			fi
 		fi
 	fi
+	rm $TMP_SQL
 
-	if [ "$DEBUG" != "1" ]; then
-		rm $LINE_LIST
-		rm $SQL
-	fi
 	return $RETCODE
 }
 
@@ -462,39 +460,26 @@ function _list_one_binlog_transactions_th()
 	local COMMIT_LINE
 	local DEL
 	local INS
-	local LINES_START_LINE
-	local SQL_CUR_LINE
+	local FIRST_LINE
+	local SQL
 	local TABLE_NAME
-	local TH_START_LINE
 	local TIMESTAMP
-	local TXN
+	local TH_ID
 	local T_DATA
 	local TABLE
 	local TOTAL
 	local UPD
 	
-		declare -A INS_TAB
-		declare -A UPD_TAB
-		declare -A DEL_TAB
+	declare -A INS_TAB
+	declare -A UPD_TAB
+	declare -A DEL_TAB
 
-	TH_START_LINE=$1
-	LINES_START_LINE=$TH_START_LINE
+	FIRST_LINE=1
+	TH_ID=$1
+	I=$TH_ID
+	SQL=$SQL_DIR/$I.sql
 
-	for I in `seq 1 $TH_LINE_COUNT`; do
-		#if our first line is greater than total number of lines of the file, just ignore it
-		if [ $LINES_START_LINE -gt $LINES_TOTAL_LINES ]; then
-			return
-		fi
-
-		SQL_CUR_LINE=`head -n $LINES_START_LINE $LINE_LIST | tail -n 1`
-		COMMIT_LINE=`tail -n +${SQL_CUR_LINE} $SQL | grep -nwi -m 1 ^commit | cut -d : -f 1`
-
-		#timestamp is in the last line with "at" before the line with "BEGIN"
-		TIMESTAMP=`head -n $SQL_CUR_LINE $SQL | tail -n 20 | grep -A 1 -w at | tail -n 1 | cut -d \  -f 2`
-
-		TXN=`mktemp /tmp/myfreerman.XXXXXX`
-		tail -n +${SQL_CUR_LINE} $SQL | head -n $COMMIT_LINE >$TXN
-
+	while [ -f $SQL ]; do
 		TOTAL=0
 		INS_TAB=()
 		UPD_TAB=()
@@ -502,6 +487,11 @@ function _list_one_binlog_transactions_th()
 
 		#for each line
 		while IFS= read -r LINE; do
+			if [ $FIRST_LINE -eq 1 ]; then
+				TIMESTAMP=$LINE
+				FIRST_LINE=0
+			fi
+
 			#INSERT?
 			if [[ "$LINE" =~ "### INSERT ".* ]]; then
 				((TOTAL++))
@@ -562,10 +552,7 @@ function _list_one_binlog_transactions_th()
 					UPD_TAB[$TABLE_NAME]=0
 				fi
 			fi
-		done <$TXN
-		if [ "$DEBUG" != "1" ]; then
-			rm $TXN
-		fi
+		done <$SQL
 
 		T_DATA=
 		for TABLE in "${!INS_TAB[@]}"; do
@@ -575,7 +562,8 @@ function _list_one_binlog_transactions_th()
 			T_DATA="${T_DATA}${TABLE}:${INS},${UPD},${DEL};"
 		done
 		printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA >>"$OUTPUT"
-		((LINES_START_LINE++))
+		((I+=PROCESS_THREADS))
+		SQL=$SQL_DIR/$I.sql
 	done
 }
 
@@ -719,4 +707,35 @@ function _mount_end_time_option()
 	if [ -n "$END_TIME" ]; then
 		echo --stop-datetime=\"$END_TIME\"
 	fi
+}
+
+function _split_sql_transactions()
+{
+	I=1
+	IN_TXN=0
+
+	while IFS= read -r LINE; do
+		if [ $IN_TXN -eq 0 ]; then
+			#if line hast a timestamp, save it, in order to be used in BEGIN
+			#if [[ "$LINE" =~ ^.*" server id ".* ]]; then
+			if echo "$LINE" | grep ' server id ' >/dev/null; then
+				TIMESTAMP=`echo $LINE | cut -d \  -f 2`
+				continue
+			fi
+
+			if [ "$LINE" == "BEGIN" ]; then
+				SQL=$SQL_DIR/$I.sql
+				echo "$TIMESTAMP" >$SQL
+				IN_TXN=1
+				((I++))
+				continue
+			fi
+		else
+			if echo "$LINE" | grep -nwi ^commit >/dev/null; then
+				IN_TXN=0
+				continue
+			fi
+			echo "$LINE" >>$SQL
+		fi
+	done <$TMP_SQL
 }
