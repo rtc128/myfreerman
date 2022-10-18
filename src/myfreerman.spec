@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.2.4
+Version:			 2.2.5
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -22,6 +22,7 @@ It adds support for:
 %setup -q
 %build
 %install
+install -m 0755 -d $RPM_BUILD_ROOT/var/lib/myfreerman
 install -m 0755 -d $RPM_BUILD_ROOT/var/log/myfreerman
 install -m 0755 -d $RPM_BUILD_ROOT/usr/bin
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man1
@@ -42,6 +43,9 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/lib/myfreerman
 
 %changelog
+
+* Tue Oct 18 2022 Rodrigo Tassinari 2.2.5
+- Create a default working dir
 
 * Fri Oct 14 2022 Rodrigo Tassinari 2.2.4
 - Fix in RPM package
