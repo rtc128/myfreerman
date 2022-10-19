@@ -47,8 +47,8 @@ function binlog_do_list_events()
 
 function binlog_do_list_transactions()
 {
+	MIN_DATE_REACHED=0
 	_list_transactions_validate_params || return 1
-	lock_binlog_lock || return 1
 
 	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
 	_list_local_transactions
@@ -56,8 +56,7 @@ function binlog_do_list_transactions()
 	if [ $RETCODE -eq 1 ]; then
 		return 1
 	fi
-	lock_binlog_unlock || return 1
-	if [ $RETCODE -ne 100 ]; then
+	if [ $MIN_DATE_REACHED -eq 0 ]; then
 		_list_backup_transactions || return 1
 	fi
 	sort $OUTPUT
@@ -111,7 +110,7 @@ function _list_backup_transactions()
 		return
 	fi
 
-	SEQ=$((FIRST_LOCAL_BINLOG_SEQ-1))
+	SEQ=$NEXT_BINLOG_SEQ
 	SEQ=`printf %06d $SEQ`
 	FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
 	while [ -f "$FPATH" ]; do
@@ -120,10 +119,9 @@ function _list_backup_transactions()
 		if file "$FPATH" | grep -wi "compressed" >/dev/null; then
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
-			_list_one_binlog_transactions ${BINLOG}
-			RC=$?
+			_list_one_binlog_transactions ${BINLOG} || return 1;
 			rm $BINLOG
-			if [ $RC -eq 100 ]; then
+			if [ $MIN_DATE_REACHED -eq 1 ]; then
 				break
 			fi
 			HANDLED=1
@@ -131,7 +129,7 @@ function _list_backup_transactions()
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
 			_list_one_binlog_transactions "${FPATH}"
-			if [ $? -eq 100 ]; then
+			if [ $MIN_DATE_REACHED -eq 1 ]; then
 				break
 			fi
 			HANDLED=1
@@ -141,7 +139,7 @@ function _list_backup_transactions()
 			write_out "Not a binary log file [$FPATH]"
 			return 1
 		fi
-		((SEQ--))
+		SEQ=`expr $SEQ - 1`
 		SEQ=`printf %06d $SEQ`
 		FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
 	done
@@ -258,19 +256,23 @@ function _list_local_transactions()
 	BINLOG_LIST=`mktemp /tmp/myfreerman.XXXXXX`
 	list_server_binlogs >$BINLOG_LIST || return 1
 
-	#for each binlog, from last to first
-	COUNT=`wc -l $BINLOG_LIST | cut -d \  -f 1`
-	for i in `seq 1 $COUNT`; do
-		NAME=`tail -n $i $BINLOG_LIST | head -n 1`
-		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
-		_list_one_binlog_transactions "${FULL_NAME}"
-		if [ $? -eq 100 ]; then
-			rm $BINLOG_LIST
-			return 100
-		fi
-		FIRST_LOCAL_BINLOG_SEQ=`echo $NAME | cut -d . -f 2`
-	done
+	#start in last binlog until seq is not found
+	NAME=`tail -n 1 $BINLOG_LIST`
 	rm $BINLOG_LIST
+
+	FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
+	while [ -f "$FULL_NAME" ]; do
+		_list_one_binlog_transactions "${FULL_NAME}"
+		if [ $MIN_DATE_REACHED -eq 1 ]; then
+			return
+		fi
+		SEQ=`echo $NAME | cut -d . -f 2`
+		SEQ=`expr $SEQ - 1`
+		LONG_SEQ=`printf %06s $SEQ`
+		NAME=binlog.$LONG_SEQ
+		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
+	done
+	NEXT_BINLOG_SEQ=$SEQ
 }
 
 function _list_one_binlog_events()
@@ -362,7 +364,7 @@ function _list_one_binlog_transactions()
 		rm -fr $SQL_DIR
 	fi
 	RETCODE=0
-	#if first event in binlog is before our 'start time', return 100
+	#if first event in binlog is before our 'start time', tell everyone (MIN_DATE_REACHED=1)
 	#indicating to stop execution
 	if [ -n "$START_TIME" ]; then
 		if [ -n "$END_TIME" ]; then
@@ -383,7 +385,7 @@ function _list_one_binlog_transactions()
 			AUX_FMT_FULL_TIMESTAMP="${AUX_FMT_DT} ${AUX_FMT_TIME}"
 
 			if [[ "$AUX_FMT_FULL_TIMESTAMP" < "$START_TIME" ]]; then
-				RETCODE=100
+				MIN_DATE_REACHED=1
 			fi
 		fi
 	fi
@@ -474,12 +476,12 @@ function _list_one_binlog_transactions_th()
 	declare -A UPD_TAB
 	declare -A DEL_TAB
 
-	FIRST_LINE=1
 	TH_ID=$1
 	I=$TH_ID
 	SQL=$SQL_DIR/$I.sql
 
 	while [ -f $SQL ]; do
+		FIRST_LINE=1
 		TOTAL=0
 		INS_TAB=()
 		UPD_TAB=()
