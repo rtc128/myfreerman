@@ -268,7 +268,7 @@ function _list_local_transactions()
 		fi
 		SEQ=`echo $NAME | cut -d . -f 2`
 		SEQ=`expr $SEQ - 1`
-		LONG_SEQ=`printf %06s $SEQ`
+		LONG_SEQ=`printf %06d $SEQ`
 		NAME=binlog.$LONG_SEQ
 		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
 	done
