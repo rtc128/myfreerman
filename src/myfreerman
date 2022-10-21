@@ -468,13 +468,14 @@ function help_list_events
 function help_list_transactions
 {
 	echo "* List transactions from binary logs"
-	echo "   list transactions [ -h ] [ -m <min> ] [ -s <timestamp> ] [ -e <timestamp> ]"
+	echo "   list transactions [ -h ] [ -d <schema> ] [ -m <min> ] [ -s <timestamp> ] [ -e <timestamp> ]"
 	echo "      Output table contains the following colums: transaction start time, <total>, <table details>"
 	echo "         total: total number of rows affected by the transaction"
 	echo "         table details: list of each table affected, followed by number of INSERTs, UPDATEs and DELETEs on the table"
 	echo "      Number of threads to use is defined in PROCESS_THREADS config."
 	echo "      Minimum params are -s or -m"
 	echo "      -h: Show this help"
+	echo "      -d: Set default schema to <schema>. Tables in this schema are not gonna be qualified, in generated list"
 	echo "      -m: List transactions executed in the last <min> minutes"
 	echo "         Cannot be used with -s or -e"
 	echo "      -e: List transactions executed before <timestamp>"
@@ -1988,13 +1989,16 @@ function list_transactions()
 	DETAILED=0
 	START_TIME=
 	END_TIME=
+	DEFAULT_SCHEMA=
 	local OPTIND l_opt
-	while getopts "hm:s:e:" l_opt; do
+	while getopts "hd:m:s:e:" l_opt; do
 		case $l_opt in
 			h)
 				help_list_transactions
 				return
 				;;
+			d)
+				DEFAULT_SCHEMA=$OPTARG;;
 			m)
 				MINUTES=$OPTARG;;
 			s)

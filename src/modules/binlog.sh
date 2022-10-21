@@ -462,6 +462,7 @@ function _list_one_binlog_transactions_th()
 	local COMMIT_LINE
 	local DEL
 	local INS
+	local FINAL_TABLE
 	local FIRST_LINE
 	local SQL
 	local TABLE_NAME
@@ -558,10 +559,20 @@ function _list_one_binlog_transactions_th()
 
 		T_DATA=
 		for TABLE in "${!INS_TAB[@]}"; do
+			FINAL_TABLE=$TABLE
+			#check if it is default schema
+			if [ -n "$DEFAULT_SCHEMA" ]; then
+				SCHEMA=`echo $TABLE | cut -d . -f 1`
+				BASE_TABLE=`echo $TABLE | cut -d . -f 2`
+				if [ "$DEFAULT_SCHEMA" == "$SCHEMA" ]; then
+					FINAL_TABLE=$BASE_TABLE
+				fi
+			fi
+
 			INS="${INS_TAB[$TABLE]}"
 			UPD="${UPD_TAB[$TABLE]}"
 			DEL="${DEL_TAB[$TABLE]}"
-			T_DATA="${T_DATA}${TABLE}:${INS},${UPD},${DEL};"
+			T_DATA="${T_DATA}${FINAL_TABLE}:${INS},${UPD},${DEL};"
 		done
 		printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA >>"$OUTPUT"
 		((I+=PROCESS_THREADS))
