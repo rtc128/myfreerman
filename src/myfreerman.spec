@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.2.7
+Version:			 2.2.8
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -43,6 +43,9 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/lib/myfreerman
 
 %changelog
+
+* Fri Oct 21 2022 Rodrigo Tassinari 2.2.8
+- LIST TRANSACTIONS: new option to set defautl schema in list
 
 * Wed Oct 19 2022 Rodrigo Tassinari 2.2.7
 - Fix in LIST TRANSACTIONS: it was not listing all binlogs
