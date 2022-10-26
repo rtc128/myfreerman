@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.2.8
+RELEASE=2.2.9
 
 function backup()
 {
