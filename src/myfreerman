@@ -147,6 +147,7 @@ function backup_binlog()
 	rm $ERR_LOG
 	check_purge_binlogs $LAST_BINLOG || { return 1; }
 	remove_tmp_binlog_backups
+	lock_binlog_unlock || return 1
 }
 
 function backup_full()
@@ -3468,7 +3469,7 @@ function write_out()
 }
 
 if [ "$DEBUG" == "1" ]; then
-	set -x
+	set -xv
 fi
 NOW_EPOCH=`date +%s`
 DATE_VAL=`date +%Y-%m-%d`

@@ -28,4 +28,5 @@ function lock_binlog_unlock()
 {
 	LOCK_FILE="$WORKING_DIR/binlog.lock"
 	[ -f "$LOCK_FILE" -a $BINLOG_LOCKED -eq 1 ] && rm "$LOCK_FILE"
+	return 0
 }
