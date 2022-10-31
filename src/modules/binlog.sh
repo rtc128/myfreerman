@@ -724,31 +724,23 @@ function _mount_end_time_option()
 
 function _split_sql_transactions()
 {
+	local I
+
 	I=1
-	IN_TXN=0
 
-	while IFS= read -r LINE; do
-		if [ $IN_TXN -eq 0 ]; then
-			#if line hast a timestamp, save it, in order to be used in BEGIN
-			#if [[ "$LINE" =~ ^.*" server id ".* ]]; then
-			if echo "$LINE" | grep ' server id ' >/dev/null; then
-				TIMESTAMP=`echo $LINE | cut -d \  -f 2`
-				continue
-			fi
+	BEGIN_LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX`
+	#find all "START TRANSACTION" marks
+	grep -wn ^BEGIN $TMP_SQL | cut -d : -f 1 >$BEGIN_LINE_LIST
+	while IFS= read -r BEGIN_LINE_NUMBER; do
+		#get timestamp, a few lines before START TRANSACTION
+		TIMESTAMP_START_LINE_NUMBER=$((BEGIN_LINE_NUMBER-20))
+		TS_LINE=`tail -n +$TIMESTAMP_START_LINE_NUMBER $TMP_SQL | grep ' server id ' | tail -n 1`
+		TIMESTAMP=`echo $TS_LINE | cut -d \  -f 2`
 
-			if [ "$LINE" == "BEGIN" ]; then
-				SQL=$SQL_DIR/$I.sql
-				echo "$TIMESTAMP" >$SQL
-				IN_TXN=1
-				((I++))
-				continue
-			fi
-		else
-			if echo "$LINE" | grep -nwi ^commit >/dev/null; then
-				IN_TXN=0
-				continue
-			fi
-			echo "$LINE" >>$SQL
-		fi
-	done <$TMP_SQL
+		END_LINE_NUMBER=`tail -n +$BEGIN_LINE_NUMBER $TMP_SQL | grep -wn -m 1 ^COMMIT | cut -d : -f 1`
+		SQL=$SQL_DIR/$I.sql
+		echo $TIMESTAMP >$SQL
+		tail -n +$BEGIN_LINE_NUMBER $TMP_SQL | head -n $END_LINE_NUMBER >>$SQL
+		((I++))
+	done <$BEGIN_LINE_LIST
 }
