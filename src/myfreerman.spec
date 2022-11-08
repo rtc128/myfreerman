@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.2.11
+Version:			 2.2.12
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -42,8 +42,12 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/share/man/man8/myfreerman.conf.8.gz
 /usr/lib/myfreerman
 %dir /var/lib/myfreerman
+%dir /usr/lib/myfreerman/modules
 
 %changelog
+
+* Tue Nov 8 2022 Rodrigo Tassinari 2.2.12
+- When dropping a database, clear temp area
 
 * Mon Oct 31 2022 Rodrigo Tassinari 2.2.11
 - Fixed error in RPM packages
