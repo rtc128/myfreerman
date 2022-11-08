@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.2.11
+RELEASE=2.2.12
 
 function backup()
 {
@@ -1510,6 +1510,12 @@ function drop_database()
 	if [ -n "$RELAY_LOG_PREFIX" ]; then
 		rm -f "${RELAY_LOG_PREFIX}"* || return 1
 	fi
+
+	#innodb temp tablespaces directory
+	INNODB_TEMP_TABLESPACES_DIR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION innodb_temp_tablespaces_dir 2>/dev/null`"
+	if [ -n "$INNODB_TEMP_TABLESPACES_DIR" ]; then
+		rm -f "${INNODB_TEMP_TABLESPACES_DIR}"/* || return 1
+	fi
 }
 
 function init()
@@ -1677,6 +1683,15 @@ function init_database()
 		mkdir -p "$TMP_DIRECTORY" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$TMP_DIRECTORY" || return 1
+		fi
+	fi
+
+	#innodb temp tablespaces directory
+	INNODB_TEMP_TABLESPACES_DIR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION innodb_temp_tablespaces_dir 2>/dev/null`"
+	if [ -n "$INNODB_TEMP_TABLESPACES_DIR" ]; then
+		mkdir -p "$INNODB_TEMP_TABLESPACES_DIR" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$INNODB_TEMP_TABLESPACES_DIR" || return 1
 		fi
 	fi
 
