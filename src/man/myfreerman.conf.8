@@ -59,6 +59,9 @@ slave_server: Hostname and port of the slave server that is receiving updates fr
 working_file: File where current operation context will be saved. For instance, APPLY BINLOG command needs this file. Cannot be shared between instances on the same server.
    DEFAULT: /var/lib/mysql/myfreerman.work
 
+use_rclone: 0 => use MEB for database restoration; 1 => use RCLONE for database restoration
+   DEFAULT: 0
+
 .SH EXAMPLE
 
 ==> Instance: tst

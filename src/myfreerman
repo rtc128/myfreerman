@@ -616,6 +616,19 @@ function check_config()
 		echo "Configuration 'disable_buffer_pool_dump' must be 0 or 1" >&2
 		return 1
 	fi
+
+	#use rclone
+	if [ "$USE_RCLONE" != "0" -a "$USE_RCLONE" != "1" ]; then
+		echo "Configuration 'use_rclone' must be 0 or 1" >&2
+		return 1
+	fi
+	#if enabled, rclone must be found
+	if [ $USE_RCLONE -eq 1 ]; then
+		if ! which rclone >/dev/null 2>&1; then
+			write_out "RCLONE not found. If you do not plan to use it, please disable it in config file."
+			return 1
+		fi
+	fi
 }
 
 function check_config_backup()
@@ -2391,6 +2404,13 @@ function read_rman_config()
 		DISABLE_BUFFER_POOL_DUMP=0
 	fi
 
+	#use rclone?
+	USE_RCLONE="`crudini --get "$RMAN_CONFIG" $INI_SECTION use_rclone 2>/dev/null`"
+	#default: 0
+	if [ -z "$USE_RCLONE" ]; then
+		USE_RCLONE=0
+	fi
+
 	check_config || return 1
 }
 
@@ -3145,21 +3165,12 @@ function restore_target_instance()
 	LIM_MEM_OPT=`mount_limit_memory_option`
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 
-	if [ -n "$LOG_FILE" ]; then
-		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" >$TMP_LOG 2>&1 
-		RETCODE=$?
-		cat $TMP_LOG >>"$LOG_FILE"
-		cat $TMP_LOG
-		rm $TMP_LOG
-		if [ $RETCODE -ne 0 ]; then
-			return 1
-		fi
+	if [ $USE_RCLONE -eq 1 ]; then
+		restore_target_instance_with_rclone || return 1
 	else
-		write_out "===== STARTING MEB ====="
-		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" || return 1 
+		restore_target_instance_with_meb || return 1
 	fi
+
 #===========================================
 #Rodrigo Tassinari - 2020-03-11
 #BUG in MEB 8.0.18:
@@ -3198,6 +3209,57 @@ function restore_target_instance()
 		if [ -n "$RELAY_LOG_DIR" -a -n "$MYSQLD_USER" ]; then
 			chown -R $MYSQLD_USER "$RELAY_LOG_DIR" || return 1
 		fi
+	fi
+}
+
+function restore_target_instance_with_meb()
+{
+	if [ -n "$LOG_FILE" ]; then
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" >$TMP_LOG 2>&1 
+		RETCODE=$?
+		cat $TMP_LOG >>"$LOG_FILE"
+		cat $TMP_LOG
+		rm $TMP_LOG
+		if [ $RETCODE -ne 0 ]; then
+			return 1
+		fi
+	else
+		write_out "===== STARTING MEB ====="
+		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" || return 1 
+	fi
+}
+
+function restore_target_instance_with_rclone()
+{
+	BKP_DATADIR="$FULL_DIR/datadir"
+	if [ -n "$LOG_FILE" ]; then
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+		write_out "===== STARTING RCLONE (database) - Log: $TMP_LOG ====="
+		rclone --transfers=$BACKUP_READ_THREADS -v --exclude '/ib_logfile*' --exclude '/undo*' sync "${BKP_DATADIR}/" "$DATADIR" >$TMP_LOG 2>&1
+		RETCODE=$?
+		cat $TMP_LOG >>"$LOG_FILE"
+		cat $TMP_LOG
+		rm $TMP_LOG
+		if [ $RETCODE -ne 0 ]; then
+			return 1
+		fi
+
+		write_out "===== STARTING RCLONE (redo logs) - Log: $TMP_LOG ====="
+		rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" >$TMP_LOG 2>&1
+		RETCODE=$?
+		cat $TMP_LOG >>"$LOG_FILE"
+		cat $TMP_LOG
+		rm $TMP_LOG
+		if [ $RETCODE -ne 0 ]; then
+			return 1
+		fi
+	else
+		write_out "===== STARTING RCLONE (database) ====="
+		rclone --transfers=$BACKUP_READ_THREADS -v --exclude '/ib_logfile*' --exclude '/undo*' sync "${BKP_DATADIR}/" "$DATADIR" || return 1
+		write_out "===== STARTING RCLONE (redo logs) ====="
+		rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" || return 1
 	fi
 }
 
