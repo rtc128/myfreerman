@@ -47,20 +47,38 @@ function binlog_do_list_events()
 
 function binlog_do_list_transactions()
 {
-	MIN_DATE_REACHED=0
 	_list_transactions_validate_params || return 1
 
-	OUTPUT=`mktemp /tmp/myfreerman.XXXXXX`
-	_list_local_transactions
 	RETCODE=$?
 	if [ $RETCODE -eq 1 ]; then
 		return 1
 	fi
-	if [ $MIN_DATE_REACHED -eq 0 ]; then
-		_list_backup_transactions || return 1
-	fi
-	sort $OUTPUT
-	rm $OUTPUT
+	_list_backup_transactions || return 1
+	_list_local_transactions || return 1
+}
+
+function _binlog_find_first_binlog_backup_by_date()
+{
+	local MIN_DATE="$1"
+
+#return 0 means there's no binlog backup after the asked date
+	local RESULT=0
+#list files in backup
+	local LIST=`ls "$BINLOG_BACKUP_DIR"` || return 1
+#find the first one that was saved after the start time we want
+	for F in $LIST; do
+		local FULL_PATH="$BINLOG_BACKUP_DIR/$F"
+		local TMP_FTIME="`stat -c %y \"$FULL_PATH\"`"
+		local FTIME=`echo $TMP_FTIME | cut -d . -f 1`
+		if [[ "$FTIME" > "$MIN_DATE" ]]; then
+			#get binlog sequence
+			local LSEQ=`echo $F | cut -d . -f 2`
+#result is the sequence, but with no leading 0's
+			RESULT=`expr $LSEQ + 0`
+			break
+		fi
+	done
+	echo $RESULT
 }
 
 function _list_backup_events()
@@ -103,35 +121,28 @@ function _list_backup_events()
 
 function _list_backup_transactions()
 {
-	MIN_DATE="$START_TIME"
+	local MIN_DATE="$START_TIME"
 
 	#if backup binlog dir doesn't exist, list empty
 	if ! [ -d "$BINLOG_BACKUP_DIR" ]; then
 		return
 	fi
-
-	SEQ=$NEXT_BINLOG_SEQ
-	SEQ=`printf %06d $SEQ`
-	FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
+	local SSEQ=`_binlog_find_first_binlog_backup_by_date "$MIN_DATE"`
+	local LSEQ=`printf %06d $SSEQ`
+	local FPATH="$BINLOG_BACKUP_DIR/binlog.$LSEQ.gz"
 	while [ -f "$FPATH" ]; do
-		HANDLED=0
+		local HANDLED=0
 		#if it is compressed, uncompress
 		if file "$FPATH" | grep -wi "compressed" >/dev/null; then
 			BINLOG=`mktemp /tmp/myfreerman.XXXXXX`
 			gunzip -c "$FPATH" >$BINLOG || { rm $BINLOG; return 1; }
 			_list_one_binlog_transactions ${BINLOG} || return 1;
 			rm $BINLOG
-			if [ $MIN_DATE_REACHED -eq 1 ]; then
-				break
-			fi
 			HANDLED=1
 		fi
 		#if it is plain binlog, just call function
 		if file "$FPATH" | grep -wi "mysql" >/dev/null; then
 			_list_one_binlog_transactions "${FPATH}"
-			if [ $MIN_DATE_REACHED -eq 1 ]; then
-				break
-			fi
 			HANDLED=1
 		fi
 		if [ $HANDLED -eq 0 ]; then
@@ -139,9 +150,9 @@ function _list_backup_transactions()
 			write_out "Not a binary log file [$FPATH]"
 			return 1
 		fi
-		SEQ=`expr $SEQ - 1`
-		SEQ=`printf %06d $SEQ`
-		FPATH="$BINLOG_BACKUP_DIR/binlog.$SEQ.gz"
+		SSEQ=`expr $SSEQ + 1`
+		LSEQ=`printf %06d $SSEQ`
+		FPATH="$BINLOG_BACKUP_DIR/binlog.$LSEQ.gz"
 	done
 }
 
@@ -244,7 +255,7 @@ function _list_local_transactions()
 	LOG_BIN=`get_server_config log_bin` || return 1
 	[ -n "$LOG_BIN" ] || return 1
 	if [ $LOG_BIN -eq 0 ]; then
-		write_out "Logging is disbled in server"
+		write_out "Logging is disabled in server"
 		return 1
 	fi
 
@@ -254,25 +265,14 @@ function _list_local_transactions()
 
 	#list binlogs
 	BINLOG_LIST=`mktemp /tmp/myfreerman.XXXXXX`
-	list_server_binlogs >$BINLOG_LIST || return 1
+	LIST=`list_server_binlogs` || return 1
 
-	#start in last binlog until seq is not found
-	NAME=`tail -n 1 $BINLOG_LIST`
-	rm $BINLOG_LIST
-
-	FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
-	while [ -f "$FULL_NAME" ]; do
-		_list_one_binlog_transactions "${FULL_NAME}"
-		if [ $MIN_DATE_REACHED -eq 1 ]; then
-			return
-		fi
-		SEQ=`echo $NAME | cut -d . -f 2`
-		SEQ=`expr $SEQ - 1`
-		LONG_SEQ=`printf %06d $SEQ`
-		NAME=binlog.$LONG_SEQ
+	for NAME in $LIST; do
 		FULL_NAME="${BINLOG_DIRECTORY}/${NAME}"
+		if [ -f "$FULL_NAME" ]; then
+			_list_one_binlog_transactions "${FULL_NAME}"
+		fi
 	done
-	NEXT_BINLOG_SEQ=$SEQ
 }
 
 function _list_one_binlog_events()
@@ -335,63 +335,139 @@ function _list_one_binlog_events()
 
 function _list_one_binlog_transactions()
 {
-	FULL_PATH="$1"
+	local FULL_PATH="$1"
+	local SQL=`mktemp /tmp/myfreerman.XXXXXX`
 
-	TMP_SQL=`mktemp /tmp/myfreerman.XXXXXX`
 
-	if [ -n "$START_TIME" ]; then
-		#list only marks
-		if [ -n "$END_TIME" ]; then
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --stop-datetime="$END_TIME" --result-file=$TMP_SQL "$FULL_PATH"
-		else
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --result-file=$TMP_SQL "$FULL_PATH"
-		fi
-	else
-		mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$SQL "$FULL_PATH"
-	fi
+	local DEL
+	local INS
+	local FINAL_TABLE
+	local FIRST_LINE
+	local SQL
+	local TABLE_NAME
+	local TIMESTAMP
+	local TH_ID
+	local T_DATA
+	local TABLE
+	local TOTAL
+	local UPD
+	local INSIDE_TXN=0
+	
+	declare -A INS_TAB
+	declare -A UPD_TAB
+	declare -A DEL_TAB
 
-	#create directory for each single transaction
-	SQL_DIR=`mktemp -d /tmp/myfreerman.XXXXXX` || { rm $TMP_SQL; return 1; }
-	_split_sql_transactions || { rm $TMP_SQL; rm -fr $SQL_DIR; return 1; }
-	rm $TMP_SQL
+	TOTAL=0
+	INS_TAB=()
+	UPD_TAB=()
+	DEL_TAB=()
 
-	for I in `seq 1 $PROCESS_THREADS`; do
-		_list_one_binlog_transactions_th $I &
-	done
-	wait
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --stop-datetime="$END_TIME" --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
 
-	if [ "$DEBUG" != "1" ]; then
-		rm -fr $SQL_DIR
-	fi
-	RETCODE=0
-	#if first event in binlog is before our 'start time', tell everyone (MIN_DATE_REACHED=1)
-	#indicating to stop execution
-	if [ -n "$START_TIME" ]; then
-		if [ -n "$END_TIME" ]; then
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --stop-datetime="$END_TIME" --result-file=$TMP_SQL "$FULL_PATH"
-		else
-			mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --result-file=$TMP_SQL "$FULL_PATH"
-		fi
-		LINE="`head -n 20 $TMP_SQL | grep -w 'server id' | head -n 1`"
-		#continue checking only if at least one line is found
-		if [ -n "$LINE" ]; then
-			AUX_DT=`echo $LINE | cut -d \  -f 1`
-			AUX_DAY=${AUX_DT:5:2}
-			AUX_MON=${AUX_DT:3:2}
-			AUX_YEAR="20${AUX_DT:1:2}"
-
-			AUX_FMT_DT="${AUX_YEAR}-${AUX_MON}-${AUX_DAY}"
-			AUX_FMT_TIME=`echo $LINE | cut -d \  -f 2`
-			AUX_FMT_FULL_TIMESTAMP="${AUX_FMT_DT} ${AUX_FMT_TIME}"
-
-			if [[ "$AUX_FMT_FULL_TIMESTAMP" < "$START_TIME" ]]; then
-				MIN_DATE_REACHED=1
+	#for each line
+	while IFS= read -r LINE; do
+		#if not inside a txn and line has a timestamp, save it, because it could be the txn's timestamp
+		if [ $INSIDE_TXN -eq 0 ]; then
+			if [[ "$LINE" =~ " end_log_pos " ]]; then
+				TIMESTAMP=`echo $LINE | cut -d \  -f 2`
 			fi
 		fi
-	fi
-	rm $TMP_SQL
 
-	return $RETCODE
+		#check if starting a txn
+		if [[ "$LINE" =~ ^"BEGIN" ]]; then
+			INSIDE_TXN=1
+		fi
+
+		#INSERT?
+		if [[ "$LINE" =~ "### INSERT ".* ]]; then
+			((TOTAL++))
+			#get table name
+			TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+			TABLE_NAME=${TABLE_NAME//\`/}
+
+			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+				INS_TAB[$TABLE_NAME]=1
+			else
+				INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
+			fi
+
+			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+				UPD_TAB[$TABLE_NAME]=0
+			fi
+			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+				DEL_TAB[$TABLE_NAME]=0
+			fi
+		fi
+		#UPDATE?
+		if [[ "$LINE" =~ "### UPDATE ".* ]]; then
+			((TOTAL++))
+			#get table name
+			TABLE_NAME=`echo "$LINE" | cut -d \  -f 3`
+			TABLE_NAME=${TABLE_NAME//\`/}
+
+			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+				UPD_TAB[$TABLE_NAME]=1
+			else
+				UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
+			fi
+
+			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+				INS_TAB[$TABLE_NAME]=0
+			fi
+			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+				DEL_TAB[$TABLE_NAME]=0
+			fi
+		fi
+		#DELETE?
+		if [[ "$LINE" =~ "### DELETE ".* ]]; then
+			((TOTAL++))
+			#get table name
+			TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+			TABLE_NAME=${TABLE_NAME//\`/}
+
+			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+				DEL_TAB[$TABLE_NAME]=1
+			else
+				DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
+			fi
+
+			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+				INS_TAB[$TABLE_NAME]=0
+			fi
+			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+				UPD_TAB[$TABLE_NAME]=0
+			fi
+		fi
+
+		#if ending txn, print that
+		if [[ "$LINE" =~ ^"COMMIT" ]]; then
+			local T_DATA=
+			for TABLE in "${!INS_TAB[@]}"; do
+				FINAL_TABLE=$TABLE
+				#check if it is default schema
+				if [ -n "$DEFAULT_SCHEMA" ]; then
+					SCHEMA=`echo $TABLE | cut -d . -f 1`
+					BASE_TABLE=`echo $TABLE | cut -d . -f 2`
+					if [ "$DEFAULT_SCHEMA" == "$SCHEMA" ]; then
+						FINAL_TABLE=$BASE_TABLE
+					fi
+				fi
+
+				INS="${INS_TAB[$TABLE]}"
+				UPD="${UPD_TAB[$TABLE]}"
+				DEL="${DEL_TAB[$TABLE]}"
+				T_DATA="${T_DATA}${FINAL_TABLE}:${INS},${UPD},${DEL};"
+			done
+			printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA
+
+			INS_TAB=()
+			UPD_TAB=()
+			DEL_TAB=()
+			TOTAL=0
+			INSIDE_TXN=0
+		fi
+	done <$SQL
+	rm $SQL
 }
 
 function _list_one_binlog_events_th()
@@ -457,128 +533,6 @@ function _list_one_binlog_events_th()
 	rm $MARK_LIST
 }
 
-function _list_one_binlog_transactions_th()
-{
-	local COMMIT_LINE
-	local DEL
-	local INS
-	local FINAL_TABLE
-	local FIRST_LINE
-	local SQL
-	local TABLE_NAME
-	local TIMESTAMP
-	local TH_ID
-	local T_DATA
-	local TABLE
-	local TOTAL
-	local UPD
-	
-	declare -A INS_TAB
-	declare -A UPD_TAB
-	declare -A DEL_TAB
-
-	TH_ID=$1
-	I=$TH_ID
-	SQL=$SQL_DIR/$I.sql
-
-	while [ -f $SQL ]; do
-		FIRST_LINE=1
-		TOTAL=0
-		INS_TAB=()
-		UPD_TAB=()
-		DEL_TAB=()
-
-		#for each line
-		while IFS= read -r LINE; do
-			if [ $FIRST_LINE -eq 1 ]; then
-				TIMESTAMP=$LINE
-				FIRST_LINE=0
-			fi
-
-			#INSERT?
-			if [[ "$LINE" =~ "### INSERT ".* ]]; then
-				((TOTAL++))
-				#get table name
-				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
-				TABLE_NAME=${TABLE_NAME//\`/}
-
-				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-				 	INS_TAB[$TABLE_NAME]=1
-				else
-					INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
-				fi
-
-				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-					UPD_TAB[$TABLE_NAME]=0
-				fi
-				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-					DEL_TAB[$TABLE_NAME]=0
-				fi
-			fi
-			#UPDATE?
-			if [[ "$LINE" =~ "### UPDATE ".* ]]; then
-				((TOTAL++))
-				#get table name
-				TABLE_NAME=`echo "$LINE" | cut -d \  -f 3`
-				TABLE_NAME=${TABLE_NAME//\`/}
-
-				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-				 	UPD_TAB[$TABLE_NAME]=1
-				else
-					UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
-				fi
-
-				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-					INS_TAB[$TABLE_NAME]=0
-				fi
-				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-					DEL_TAB[$TABLE_NAME]=0
-				fi
-			fi
-			#DELETE?
-			if [[ "$LINE" =~ "### DELETE ".* ]]; then
-				((TOTAL++))
-				#get table name
-				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
-				TABLE_NAME=${TABLE_NAME//\`/}
-
-				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-				 	DEL_TAB[$TABLE_NAME]=1
-				else
-					DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
-				fi
-
-				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-					INS_TAB[$TABLE_NAME]=0
-				fi
-				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-					UPD_TAB[$TABLE_NAME]=0
-				fi
-			fi
-		done <$SQL
-
-		T_DATA=
-		for TABLE in "${!INS_TAB[@]}"; do
-			FINAL_TABLE=$TABLE
-			#check if it is default schema
-			if [ -n "$DEFAULT_SCHEMA" ]; then
-				SCHEMA=`echo $TABLE | cut -d . -f 1`
-				BASE_TABLE=`echo $TABLE | cut -d . -f 2`
-				if [ "$DEFAULT_SCHEMA" == "$SCHEMA" ]; then
-					FINAL_TABLE=$BASE_TABLE
-				fi
-			fi
-
-			INS="${INS_TAB[$TABLE]}"
-			UPD="${UPD_TAB[$TABLE]}"
-			DEL="${DEL_TAB[$TABLE]}"
-			T_DATA="${T_DATA}${FINAL_TABLE}:${INS},${UPD},${DEL};"
-		done
-		printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA >>"$OUTPUT"
-		((I+=PROCESS_THREADS))
-		SQL=$SQL_DIR/$I.sql
-	done
-}
 
 function _list_one_binlog_events_detailed()
 {
@@ -713,6 +667,9 @@ function _list_transactions_validate_params()
 		[ -n "$START_TIME" ] || return 1
 		START_TIME="${START_TIME/_/ }"
 	fi
+	if [ -z "$END_TIME" ]; then
+		END_TIME=`date +"%F %T"`
+	fi
 }
 
 function _mount_end_time_option()
@@ -720,27 +677,4 @@ function _mount_end_time_option()
 	if [ -n "$END_TIME" ]; then
 		echo --stop-datetime=\"$END_TIME\"
 	fi
-}
-
-function _split_sql_transactions()
-{
-	local I
-
-	I=1
-
-	BEGIN_LINE_LIST=`mktemp /tmp/myfreerman.XXXXXX`
-	#find all "START TRANSACTION" marks
-	grep -wn ^BEGIN $TMP_SQL | cut -d : -f 1 >$BEGIN_LINE_LIST
-	while IFS= read -r BEGIN_LINE_NUMBER; do
-		#get timestamp, a few lines before START TRANSACTION
-		TIMESTAMP_START_LINE_NUMBER=$((BEGIN_LINE_NUMBER-20))
-		TS_LINE=`tail -n +$TIMESTAMP_START_LINE_NUMBER $TMP_SQL | grep ' server id ' | tail -n 1`
-		TIMESTAMP=`echo $TS_LINE | cut -d \  -f 2`
-
-		END_LINE_NUMBER=`tail -n +$BEGIN_LINE_NUMBER $TMP_SQL | grep -wn -m 1 ^COMMIT | cut -d : -f 1`
-		SQL=$SQL_DIR/$I.sql
-		echo $TIMESTAMP >$SQL
-		tail -n +$BEGIN_LINE_NUMBER $TMP_SQL | head -n $END_LINE_NUMBER >>$SQL
-		((I++))
-	done <$BEGIN_LINE_LIST
 }

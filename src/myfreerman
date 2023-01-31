@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.2.13
+RELEASE=2.2.14
 
 function backup()
 {
@@ -473,7 +473,6 @@ function help_list_transactions
 	echo "      Output table contains the following colums: transaction start time, <total>, <table details>"
 	echo "         total: total number of rows affected by the transaction"
 	echo "         table details: list of each table affected, followed by number of INSERTs, UPDATEs and DELETEs on the table"
-	echo "      Number of threads to use is defined in PROCESS_THREADS config."
 	echo "      Minimum params are -s or -m"
 	echo "      -h: Show this help"
 	echo "      -d: Set default schema to <schema>. Tables in this schema are not gonna be qualified, in generated list"
@@ -2013,6 +2012,7 @@ function list_transactions()
 	MINUTES=
 	DETAILED=0
 	START_TIME=
+	#default end time is now
 	END_TIME=
 	DEFAULT_SCHEMA=
 	local OPTIND l_opt
