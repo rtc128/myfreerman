@@ -3234,6 +3234,20 @@ function restore_target_instance_with_meb()
 function restore_target_instance_with_rclone()
 {
 	BKP_DATADIR="$FULL_DIR/datadir"
+
+	#check for redo logs in old format
+	OLD_REDO=0
+	if ls "${BKP_DATADIR}/ib_logfile*" >/dev/null 2>&1; then
+		OLD_REDO=1
+	fi
+
+	#check for redo logs in new format
+	NEW_REDO=0
+	if ls -d "${BKP_DATADIR}/#innodb_redo" >/dev/null 2>&1; then
+		NEW_REDO=1
+	fi
+
+
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		write_out "===== STARTING RCLONE (database) - Log: $TMP_LOG ====="
@@ -3247,19 +3261,40 @@ function restore_target_instance_with_rclone()
 		fi
 
 		write_out "===== STARTING RCLONE (redo logs) - Log: $TMP_LOG ====="
-		rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" >$TMP_LOG 2>&1
-		RETCODE=$?
-		cat $TMP_LOG >>"$LOG_FILE"
-		cat $TMP_LOG
-		rm $TMP_LOG
-		if [ $RETCODE -ne 0 ]; then
-			return 1
+		#old format?
+		if [ $OLD_REDO -eq 1 ]; then
+			rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" >$TMP_LOG 2>&1
+			RETCODE=$?
+			cat $TMP_LOG >>"$LOG_FILE"
+			cat $TMP_LOG
+			rm $TMP_LOG
+			if [ $RETCODE -ne 0 ]; then
+				return 1
+			fi
+		fi
+		#new format?
+		if [ $NEW_REDO -eq 1 ]; then
+			rclone --transfers=$BACKUP_READ_THREADS -v sync "${BKP_DATADIR}/#innodb_redo" "$REDODIR/#innodb_redo" >$TMP_LOG 2>&1
+			RETCODE=$?
+			cat $TMP_LOG >>"$LOG_FILE"
+			cat $TMP_LOG
+			rm $TMP_LOG
+			if [ $RETCODE -ne 0 ]; then
+				return 1
+			fi
 		fi
 	else
 		write_out "===== STARTING RCLONE (database) ====="
 		rclone --transfers=$BACKUP_READ_THREADS -v --exclude '/ib_logfile*' --exclude '/undo*' sync "${BKP_DATADIR}/" "$DATADIR" || return 1
 		write_out "===== STARTING RCLONE (redo logs) ====="
-		rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" || return 1
+		#old format?
+		if [ $OLD_REDO -eq 1 ]; then
+			rclone --transfers=$BACKUP_READ_THREADS -v --include '/ib_logfile*' sync "${BKP_DATADIR}/" "$REDODIR" || return 1
+		fi
+		#new format?
+		if [ $NEW_REDO -eq 1 ]; then
+			rclone --transfers=$BACKUP_READ_THREADS -v sync "${BKP_DATADIR}/#innodb_redo" "$REDODIR/#innodb_redo" || return 1
+		fi
 	fi
 }
 
