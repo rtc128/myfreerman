@@ -40,7 +40,7 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/bin/myfreerman
 /usr/share/man/man1/myfreerman.1.gz
 /usr/share/man/man8/myfreerman.conf.8.gz
-/usr/lib/myfreerman
+%dir /var/log/myfreerman
 %dir /var/lib/myfreerman
 %dir /usr/lib/myfreerman/modules
 
