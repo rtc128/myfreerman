@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.3.1
+Version:			 2.3.2
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -40,11 +40,18 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/bin/myfreerman
 /usr/share/man/man1/myfreerman.1.gz
 /usr/share/man/man8/myfreerman.conf.8.gz
+/usr/lib/myfreerman
+/var/log/myfreerman
 %dir /var/log/myfreerman
 %dir /var/lib/myfreerman
 %dir /usr/lib/myfreerman/modules
 
 %changelog
+
+* Thu Feb 9 2023 Rodrigo Tassinari 2.3.2
+- INIT DATABASE: removed warning in authentication
+- RESTORE CONFIG: do not print end report
+- RESTORE with -o: do not require BACKUP_DIR config
 
 * Fri Feb 3 2023 Rodrigo Tassinari 2.3.1
 - Support for REDO LOG new format when restoring using RCLONE
