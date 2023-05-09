@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.4.0
+Version:			 2.4.1
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -27,29 +27,37 @@ install -m 0755 -d $RPM_BUILD_ROOT/var/log/myfreerman
 install -m 0755 -d $RPM_BUILD_ROOT/usr/bin
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man8
+install -m 0755 -d $RPM_BUILD_ROOT/usr/share/myfreerman
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 install -m 0755 -d $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0644 sql/backup.sql $RPM_BUILD_ROOT/usr/share/myfreerman/sql/backup.sql
 install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
 install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
-install -m 0644 modules/binlog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0644 modules/catalog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0644 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/binlog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/catalog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/register.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0644 sql/backup.sql $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 
 %files
 /usr/bin/myfreerman
 /usr/share/man/man1/myfreerman.1.gz
 /usr/share/man/man8/myfreerman.conf.8.gz
-/usr/share/myfreerman/sql/backup.sql
-/usr/lib/myfreerman
-/var/log/myfreerman
-%dir /var/log/myfreerman
-%dir /var/lib/myfreerman
-%dir /usr/lib/myfreerman/modules
+/usr/lib/myfreerman/
+/usr/share/myfreerman/
+/var/lib/myfreerman/
+/var/log/myfreerman/
+#%dir /usr/lib/myfreerman
+#%dir /usr/share/myfreerman
+#%dir /var/lib/myfreerman
+#%dir /var/log/myfreerman
 
 %changelog
+
+* Tue May 9 2023 Rodrigo Tassinari 2.4.1
+- Fix no module packaging
+- Better man page
 
 * Tue May 9 2023 Rodrigo Tassinari 2.4.0
 - Register backups in target database
@@ -119,10 +127,10 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 * Thu Aug 18 2022 Rodrigo Tassinari 2.1.8
 - Fix in module loader
 
-* Wed Aug 18 2022 Rodrigo Tassinari 2.1.7
+* Thu Aug 18 2022 Rodrigo Tassinari 2.1.7
 - Removed multi-thread support in FLASHBACK TABLE, because it was causing a bug
 
-* Tue Aug 17 2022 Rodrigo Tassinari 2.1.6
+* Wed Aug 17 2022 Rodrigo Tassinari 2.1.6
 - Fix in table locking, in FLASHBACK
 
 * Fri Jun 10 2022 Rodrigo Tassinari 2.1.3
