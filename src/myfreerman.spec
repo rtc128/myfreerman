@@ -1,12 +1,12 @@
 Name:           myfreerman
-Version:			 2.3.3
+Version:			 2.4.0
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
 License:			 GPL
 Source0:			 myfreerman.tar.gz
-Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-commercial-backup
+Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-commercial-backup, rclone
 
 %description
 MyFreeRMan uses MEB to create/restore backups of MySQL databases.
@@ -27,7 +27,9 @@ install -m 0755 -d $RPM_BUILD_ROOT/var/log/myfreerman
 install -m 0755 -d $RPM_BUILD_ROOT/usr/bin
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man8
+install -m 0755 -d $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 install -m 0755 -d $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0644 sql/backup.sql $RPM_BUILD_ROOT/usr/share/myfreerman/sql/backup.sql
 install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
 install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0644 myfreerman.conf.8.gz $RPM_BUILD_ROOT/usr/share/man/man8
@@ -40,6 +42,7 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /usr/bin/myfreerman
 /usr/share/man/man1/myfreerman.1.gz
 /usr/share/man/man8/myfreerman.conf.8.gz
+/usr/share/myfreerman/sql/backup.sql
 /usr/lib/myfreerman
 /var/log/myfreerman
 %dir /var/log/myfreerman
@@ -47,6 +50,9 @@ install -m 0644 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 %dir /usr/lib/myfreerman/modules
 
 %changelog
+
+* Tue May 9 2023 Rodrigo Tassinari 2.4.0
+- Register backups in target database
 
 * Thu Apr 13 2023 Rodrigo Tassinari 2.3.3
 - DROP DATABASE: fix - leave untouched internal EXT40-FS data
