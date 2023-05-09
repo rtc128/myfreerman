@@ -1,3 +1,5 @@
+#!/bin/bash
+
 function register_register_backup_binlog()
 {
 	SEQ=$1

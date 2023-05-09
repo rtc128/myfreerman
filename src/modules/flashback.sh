@@ -1,3 +1,5 @@
+#!/bin/bash
+
 function check_create_new_table()
 {
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0

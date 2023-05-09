@@ -1,3 +1,5 @@
+#!/bin/bash
+
 function table_exists()
 {
 	SCHEMA=$1

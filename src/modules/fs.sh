@@ -1,3 +1,5 @@
+#!/bin/bash
+
 function fs_remove_directory_contents()
 {
 	DIR="$1"

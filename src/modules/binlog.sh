@@ -1,3 +1,5 @@
+#!/bin/bash
+
 function binlog_get_current_master_binlog()
 {
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`

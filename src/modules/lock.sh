@@ -1,3 +1,5 @@
+#!/bin/bash
+
 BINLOG_LOCKED=0
 
 function lock_binlog_lock()
