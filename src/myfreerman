@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.4.1
+RELEASE=2.4.2
 
 function backup()
 {
@@ -227,6 +227,8 @@ function backup_full()
 	ID=`ls "${BASE_BACKUP_DIR}" | tail -n 1` || return 1
 	write_out "Registering new backup"
 	register_register_backup_full $LAST_BACKUP
+	write_out "Removing stale temporary data"
+	remove_stale_temp_data
 }
 
 function do_apply_binlog()
@@ -2718,6 +2720,17 @@ function remove_expired_full_backups()
 			PREV_BKP=`echo $PREV_BKP | cut -d . -f 1`
 		fi
 		PREV_BKP=$BKP
+	done
+}
+
+function remove_stale_temp_data()
+{
+	REF=`date --date="-15 days" +%Y-%m-%d_%H:%M:%S`
+	for I in `ls "$TMP_BACKUP_DIR"`; do
+		if [[ "$I" < "$REF" ]]; then
+			DIR="$TMP_BACKUP_DIR/$I"
+			rm -fr "$DIR"
+		fi
 	done
 }
 
