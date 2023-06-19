@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.4.2
+Version:			 2.4.3
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -28,7 +28,6 @@ install -m 0755 -d $RPM_BUILD_ROOT/usr/bin
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man1
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/man/man8
 install -m 0755 -d $RPM_BUILD_ROOT/usr/share/myfreerman
-install -m 0755 -d $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 install -m 0755 -d $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 myfreerman $RPM_BUILD_ROOT/usr/bin/myfreerman
 install -m 0644 myfreerman.1.gz $RPM_BUILD_ROOT/usr/share/man/man1
@@ -37,8 +36,6 @@ install -m 0755 modules/binlog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/catalog.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0755 modules/register.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
-install -m 0644 sql/backup.sql $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 
 %files
 /usr/bin/myfreerman
@@ -54,6 +51,9 @@ install -m 0644 sql/backup.sql $RPM_BUILD_ROOT/usr/share/myfreerman/sql
 #%dir /var/log/myfreerman
 
 %changelog
+
+* Mon Jun 19 2023 Rodrigo Tassinari 2.4.3
+- Removed catalog in database
 
 * Wed May 10 2023 Rodrigo Tassinari 2.4.2
 - Remove expired temporary directories
