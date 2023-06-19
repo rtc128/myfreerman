@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.4.3
+RELEASE=2.4.4
 
 function backup()
 {
@@ -1977,17 +1977,6 @@ function list_events()
 
 function list_full()
 {
-	SERVER_ID=`crudini --get $SERVER_CONFIG $SERVER_INI_SECTION server_id` 2>/dev/null
-	#default server id is 1
-	if [ -z "$SERVER_ID" ]; then
-		SERVER_ID=1
-	fi
-	echo -e DATE '\t\t' TIME
-	echo "-------------------------"
-	QUERY="select date_format(end_time, '%Y-%m-%d'), date_format(end_time, '%H:%i-%S') from rman.backup where server_id = $SERVER_ID and backup_type = 'F' order by 1, 2"
-	mysql -N --socket=$SERVER_SOCKET $TARGET_CRED_OPT -e "$QUERY" >/tmp/a
-	cat /tmp/a
-	return
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	echo -e DATE '\t\t' TIME
