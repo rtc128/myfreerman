@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.4.2
+RELEASE=2.4.3
 
 function backup()
 {
@@ -142,7 +142,6 @@ function backup_binlog()
 			RC=$?
 			write_file_out $ERR_LOG
 			[ $RC -eq 0 ] || { rm $ERR_LOG; return 1; }
-			register_register_backup_binlog $LOGSEQ || return 1
 		fi
 	done
 	rm $ERR_LOG
@@ -223,10 +222,6 @@ function backup_full()
 	LAST_BACKUP=`ls "${BASE_BACKUP_DIR}" | tail -n 1` || return 1
 	fix_backup_timestamp $LAST_BACKUP || return 1
 
-	#get backup id, so it can be registered in database
-	ID=`ls "${BASE_BACKUP_DIR}" | tail -n 1` || return 1
-	write_out "Registering new backup"
-	register_register_backup_full $LAST_BACKUP
 	write_out "Removing stale temporary data"
 	remove_stale_temp_data
 }
@@ -1000,7 +995,6 @@ function crosscheck_binlogs()
 			SHORT_SEQ=`expr $LONG_SEQ + 0`
 			write_out "   Removing obsolete backup of binary log #${SHORT_SEQ}"
 			rm "$BINLOG_BACKUP_DIR"/$F 2>/dev/null
-			register_unregister_backup_binlog ${SHORT_SEQ} || return 1
 		fi
 	done
 }
@@ -1983,6 +1977,17 @@ function list_events()
 
 function list_full()
 {
+	SERVER_ID=`crudini --get $SERVER_CONFIG $SERVER_INI_SECTION server_id` 2>/dev/null
+	#default server id is 1
+	if [ -z "$SERVER_ID" ]; then
+		SERVER_ID=1
+	fi
+	echo -e DATE '\t\t' TIME
+	echo "-------------------------"
+	QUERY="select date_format(end_time, '%Y-%m-%d'), date_format(end_time, '%H:%i-%S') from rman.backup where server_id = $SERVER_ID and backup_type = 'F' order by 1, 2"
+	mysql -N --socket=$SERVER_SOCKET $TARGET_CRED_OPT -e "$QUERY" >/tmp/a
+	cat /tmp/a
+	return
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	mkdir -p "$BASE_BACKUP_DIR" || return 1
 	echo -e DATE '\t\t' TIME
@@ -2716,7 +2721,6 @@ function remove_expired_full_backups()
 		if [ -n "$PREV_BKP" ]; then
 			write_out "Removing expired full backup $PREV_BKP"
 			rm -fr "$BASE_BACKUP_DIR/$PREV_BKP" || return 1
-			register_unregister_backup_full $PREV_BKP || return 1
 			PREV_BKP=`echo $PREV_BKP | cut -d . -f 1`
 		fi
 		PREV_BKP=$BKP
