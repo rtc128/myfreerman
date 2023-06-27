@@ -2194,6 +2194,27 @@ function port_available()
 	return 0
 }
 
+function promote()
+{
+	write_out "Checking if local instance is a replica"
+	replica_check_is_replica || return 1
+	write_out "Querying master location"
+	MASTER=`replica_query_master_location`
+	MASTER_HOST=`echo $MASTER | cut -d \  -f 1`
+	MASTER_PORT=`echo $MASTER | cut -d \  -f 2`
+	REPL_USER=`echo $MASTER | cut -d \  -f 3`
+	write_out "Checking SSH access to master host"
+	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no -t $MASTER_HOST true >/dev/null || return 1
+	echo -n "Please type replication user [$REPL_USER] password: "
+	read REPL_PASSWD
+	echo "Listing all replicas"
+	QUERY="select host from information_schema.processlist where user = '$REPL_USER'"
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	MYSQL_PWD=$REPL_PASSWD mysql -N -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USER -e "$QUERY" >$BUFF
+	cat $BUFF
+	rm $BUFF
+}
+
 function purge_binlogs()
 {
 	LIMIT_LOG=$1
@@ -3442,6 +3463,9 @@ function run()
 			;;
 		list)
 			list $* || return 1
+			;;
+		promote)
+			promote $* || return 1
 			;;
 		query)
 			query $* || return 1
