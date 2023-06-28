@@ -1002,7 +1002,7 @@ function crosscheck_binlogs()
 function drop_target_database()
 {
 	if [ -n "$REDODIR" ]; then
-		fs_remove_directory_contentsr "$REDODIR" || return 1
+		fs_remove_directory_contents "$REDODIR" || return 1
 	fi
 	if [ -n "$UNDODIR" ]; then
 		fs_remove_directory_contents "$UNDODIR" || return 1
@@ -2203,16 +2203,51 @@ function promote()
 	MASTER_HOST=`echo $MASTER | cut -d \  -f 1`
 	MASTER_PORT=`echo $MASTER | cut -d \  -f 2`
 	REPL_USER=`echo $MASTER | cut -d \  -f 3`
-	write_out "Checking SSH access to master host"
-	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no -t $MASTER_HOST true >/dev/null || return 1
+	write_out "Checking SSH connection to master host"
+	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST true >/dev/null || return 1
 	echo -n "Please type replication user [$REPL_USER] password: "
 	read REPL_PASSWD
 	echo "Listing all replicas"
 	QUERY="select host from information_schema.processlist where user = '$REPL_USER'"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	OLD_MYSQL_PWD=$MYSQL_PWD
 	MYSQL_PWD=$REPL_PASSWD mysql -N -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USER -e "$QUERY" >$BUFF
-	cat $BUFF
+	export MYSQL_PWD=$OLD_MYSQL_PWD
+
+	write_out "Checking SSH connection to other replicas"
+
 	rm $BUFF
+	write_out "Checking replica delay"
+	DELAY=`replica_query_delay`
+	if [ -z "$DELAY" -o "$DELAY" == "NULL" ]; then
+		write_out "Cannot check replica delay"
+		return 1
+	fi
+	if [ $DELAY -gt 5 ]; then
+		write_out "Replica delay is too high [$DELAY]"
+		return 1
+	fi
+
+	write_out "Enabling READ-ONLY mode in master"
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	mysql -h $MASTER_HOST -P $MASTER_PORT -e "set global read_only = on" || return 1
+
+	write_out "Querying last transaction executed in master"
+	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "show master status\G" >$BUFF || { rm $BUFF; return 1; }
+	LAST_GTID_MASTER=`grep -i executed_gtid_set $BUFF | awk '{ print $NF }'`
+	rm $BUFF
+	write_out "Waiting for replica to apply last executed transaction"
+	replica_wait_for_transaction $LAST_GTID_MASTER
+
+	write_out "Disabling READ-ONLY mode in replica"
+	mysql $TARGET_CRED_OPT -e "set global read_only = off" || return 1
+	mysql $TARGET_CRED_OPT -e "set global super_read_only = off" || return 1
+
+	write_out "Converting replica to master"
+	mysql $TARGET_CRED_OPT -e "reset replica all" || return 1
+
 }
 
 function purge_binlogs()
@@ -3168,7 +3203,7 @@ function restore_target_instance()
 			UNDODIR="$DATADIR/$UNDODIR"
 		fi
 		mkdir -p "$UNDODIR" || return 1
-		fs_remove_directory_contentsr "$UNDODIR" || return 1
+		fs_remove_directory_contents "$UNDODIR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$UNDODIR" || return 1
 		fi
