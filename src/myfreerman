@@ -198,7 +198,20 @@ function backup_full()
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
-		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup-and-apply-log >$TMP_LOG 2>&1 
+
+		#only backup, no apply-log
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup >$TMP_LOG 2>&1 
+		RETCODE=$?
+		cat $TMP_LOG
+		cat $TMP_LOG >>"$LOG_FILE"
+		rm $TMP_LOG
+		if [ $RETCODE -ne 0 ]; then
+			rm -fr "$TMP_DIRECTORY"
+			return 1
+		fi
+
+		#only apply-log
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog apply-log >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
