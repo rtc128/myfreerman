@@ -14,6 +14,15 @@ aux_basedir: Directory that the auxiliar instance will use to restore a specific
 
 backup_dir: Directory where backups are going to be saved.
 
+backup_limit_memory: Max memory usage (Mb) in full backups.
+   DEFAULT: 100.
+   MIN: 20.
+	MAX: 2048.
+
+backup_process_threads: Number of threads that will apply redo logs in full backups.
+   DEFAULT: 6.
+	MAX: 15.
+
 backup_read_threads: Number of threads that will read data in full backups.
    DEFAULT: 1.
 	MAX: 15.
