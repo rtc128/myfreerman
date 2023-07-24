@@ -1863,7 +1863,7 @@ function init_slave()
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 
 	#mount command to config slave
-	CMD="change master to master_host='$MASTER_HOST', master_port=$MASTER_PORT, master_auto_position=1, master_ssl=1, master_user='$REPL_USERNAME', master_password='$REPL_PASSWD'";
+	CMD="change replication source to source_host='$MASTER_HOST', source_port=$MASTER_PORT, source_auto_position=1, source_ssl=1, source_user='$REPL_USERNAME', source_password='$REPL_PASSWD'";
 	write_out "Setting new slave configuration"
 	if ! mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD"; then
 		mysql_stop || return 1
@@ -2256,12 +2256,15 @@ function promote()
 	replica_wait_for_transaction $LAST_GTID_MASTER
 
 	write_out "Disabling READ-ONLY mode in local replica"
-	mysql $TARGET_CRED_OPT -e "set global read_only = off" || return 1
+	mysql -S "$SERVER_SOCKET" $TARGET_CRED_OPT -e "set global read_only = off" || return 1
 	write_out "Disabling SUPER-READ-ONLY mode in local replica"
-	mysql $TARGET_CRED_OPT -e "set global super_read_only = off" || return 1
+	mysql -S "$SERVER_SOCKET" $TARGET_CRED_OPT -e "set global super_read_only = off" || return 1
+
+	write_out "Stopping applier in local replica"
+	mysql -S "$SERVER_SOCKET" $TARGET_CRED_OPT -e "stop replica" || return 1
 
 	write_out "Converting local replica to master"
-	mysql $TARGET_CRED_OPT -e "reset replica all" || return 1
+	mysql -S "$SERVER_SOCKET" $TARGET_CRED_OPT -e "reset replica all" || return 1
 
 	write_out "Converting master to replica"
 	HOST_FIRST_NAME=`echo $HOSTNAME | cut -d . -f 1`
@@ -2271,18 +2274,18 @@ function promote()
 	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY" || return 1
 
 	write_out "Persisting enabled READ-ONLY mode in old master"
-	CMD="crudini --set /etc/my.cnf mysqld read_only on"
+	CMD="crudini --set $SERVER_CONFIG mysqld read_only on"
 	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST "$CMD" >/dev/null || return 1
 
 	write_out "Persisting enabled SUPER-READ-ONLY mode in old master"
-	CMD="crudini --set /etc/my.cnf mysqld super_read_only on"
+	CMD="crudini --set $SERVER_CONFIG mysqld super_read_only on"
 	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST "$CMD" >/dev/null || return 1
 
 	write_out "Persisting disabled READ-ONLY mode in new master"
-	crudini --set /etc/my.cnf mysqld read_only off
+	crudini --set $SERVER_CONFIG mysqld read_only off
 
 	write_out "Persisting disabled SUPER-READ-ONLY mode in new master"
-	crudini --set /etc/my.cnf mysqld super_read_only off
+	crudini --set $SERVER_CONFIG mysqld super_read_only off
 
 	write_out "Setting new master in other replicas"
 	for R in $REPLICA_LIST; do
