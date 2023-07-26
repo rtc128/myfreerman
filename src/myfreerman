@@ -2207,6 +2207,9 @@ function port_available()
 
 function promote()
 {
+	if ! confirm_operation; then
+		return 1
+	fi
 	write_out "Checking if local instance is a replica"
 	replica_check_is_replica || return 1
 	write_out "Querying master location"
