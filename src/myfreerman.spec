@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.5.1
+Version:			 2.5.2
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -49,6 +49,9 @@ install -m 0755 modules/replica.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /var/log/myfreerman/
 
 %changelog
+
+* Mon Jul 31 2023 Rodrigo Tassinari 2.5.2
+- Fix in PROMOTE: check if binlogs are enabled
 
 * Mon Jul 31 2023 Rodrigo Tassinari 2.5.1
 - Fix in package
