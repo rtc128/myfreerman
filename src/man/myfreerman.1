@@ -55,6 +55,8 @@ list
 
 	transactions
 
+promote
+
 recover
 
 	slave
@@ -137,6 +139,7 @@ Flashback is not supported for tables that had the structure changed.
 
 Flashback is not supported for tables that were TRUNCATED.
 
+
 .B init
 
 Initialize new database, which can be a new master or a slave.
@@ -145,6 +148,11 @@ Initialize new database, which can be a new master or a slave.
 .B list
 
 List backups, binlog events, transactions.
+
+
+.B promote
+
+Promote local instance to master.
 
 
 .B remove
