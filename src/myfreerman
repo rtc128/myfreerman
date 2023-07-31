@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.1
+RELEASE=2.5.3
 
 function backup()
 {
@@ -295,75 +295,96 @@ function do_apply_binlog()
 
 function help()
 {
-	echo "$0 [ -h ] [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
-	echo "options:"
-	echo "   h: display this help"
-	echo "   c: use a specific config file"
-	echo "   l: specify format for log file name"
-	echo "   q: quiet mode - do not print release information"
-	echo "   y: assume YES for all questions"
-	echo "   h: print help for command"
-	echo "commands:"
-   echo "   apply"
-   echo "   backup"
-   echo "   drop"
-   echo "   flashback"
-   echo "   list"
-   echo "   init"
-   echo "   promote"
-   echo "   recover"
-   echo "   remove"
-   echo "   restore"
+	echo "$0 <options> <command>"
+	echo "- Options: [ -h ] [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ]"
+	echo "  -h: display this help"
+	echo "  -c: use a specific config file"
+	echo "  -l: specify format for log file name"
+	echo "  -q: quiet mode - do not print release information"
+	echo "  -y: assume YES for all questions"
+	echo "- Commands:"
+   echo "  apply"
+   echo "  backup"
+   echo "  drop"
+   echo "  flashback"
+   echo "  list"
+   echo "  init"
+   echo "  promote"
+   echo "  recover"
+   echo "  remove"
+   echo "  restore"
 }
 
 function help_backup()
 {
 	echo "* Make backups"
-	echo "- Options"
-	echo "- Parameters"
-	echo "	binlog: backup binary logs"
-	echo "	full: backup full database"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
+	echo "	binlog"
+	echo "	full"
 }
 
 function help_backup_binlog()
 {
 	echo "* Backup binary logs"
-	echo "- Options"
-	echo "- Parameters"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
 }
 
 function help_backup_full()
 {
 	echo "* Backup full database"
-	echo "- Options: [ -d <dir> ]"
+	echo "- Options: [ -h ] [ -d <dir> ]"
+	echo "  -h: display this help and exit"
 	echo "  -d: save backup in <dir>, instead of directory set in configuration"
-	echo "- Parameters"
+	echo "- Parameters:"
 }
 
 function help_drop()
 {
 	echo "* Drop data from local server"
-	echo "   drop database"
-	echo "      drop current database - datafiles, redo, undo, binary logs and relay logs"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
+	echo "   database"
 }
 
 function help_drop_database()
 {
 	echo "* Drop current database - datafiles, redo, undo, binary logs and relay logs"
-	echo "   drop database"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
 }
 
 function help_init()
 {
 	echo "* Initialize a database"
-	echo "   init database"
-	echo "   init slave "
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
+	echo "   database"
+	echo "   slave "
 }
 
 function help_init_database
 {
 	echo "* Initialize a new empty database"
-	echo "   init database"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
+}
+
+function help_init_slave
+{
+	echo "* Initialize a new slave"
+	echo "- Options: [ -h ] -m <master host>[:<port>] -u <user> -d <directory>"
+	echo "  -h: display this help and exit"
+	echo "  -m: use master in <master host>[:<port>]"
+	echo "  -d: restore master backup from <directory>"
+	echo "- Parameters:"
 }
 
 function help_apply()
@@ -398,8 +419,9 @@ function help_flashback_table()
 function help_promote()
 {
 	echo "* Promote local instance to master"
-	echo "- Options"
-	echo "- Parameters"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
 }
 
 function help_recover()
@@ -453,15 +475,6 @@ function help_restore_database()
    echo "      -s Restore only specific schema (optionally using a new name)"
    echo "      -t Restore only specific table (optionally using a new name)"
    echo "         Multiple -t options are allowed"
-}
-
-function help_init_slave
-{
-	echo "* Initialize a new slave"
-	echo "   init slave <host>[:<port>] <username> <dir>"
-	echo "      host: master hostname (optional port)"
-	echo "      username: replication username created in master"
-	echo "      dir: master backup directory"
 }
 
 function help_list()
@@ -1835,11 +1848,20 @@ function init_database()
 function init_slave()
 {
 	local OPTIND l_opt
-	while getopts "h" l_opt; do
+	while getopts "d:hm:u:" l_opt; do
 		case $l_opt in
+			d)
+				BACKUP_DIRECTORY="$OPTARG"
+				;;
 			h)
 				help_init_slave
-				return
+				return 0
+				;;
+			m)
+				MASTER_HOST=$OPTARG
+				;;
+			u)
+				REPL_USERNAME=$OPTARG
 				;;
 			\?)
 				help_init_slave
@@ -1849,21 +1871,31 @@ function init_slave()
 	done
 	shift $((OPTIND-1))
 
-	if [ $# -ne 3 ]; then
+	if [ $# -ne 0 ]; then
 		help_init_slave
 		return 1
 	fi
 
+	if [ -z "$BACKUP_DIRECTORY" ]; then
+		write_out "Option -d is required"
+		return 1
+	fi
+	if [ -z "$MASTER_HOST" ]; then
+		write_out "Option -m is required"
+		return 1
+	fi
+	if [ -z "$REPL_USERNAME" ]; then
+		write_out "Option -u is required"
+		return 1
+	fi
+
 	REPORT_FINISHED=0
-	MASTER_HOST=$1
 	MASTER_PORT=`echo $MASTER_HOST | cut -s -d \: -f 2`
 	if [ -z "$MASTER_PORT" ]; then
 		MASTER_PORT=3306
 	else
 		MASTER_HOST=`echo $MASTER_HOST | cut -s -d \: -f 1`
 	fi
-	REPL_USERNAME=$2
-	BACKUP_DIRECTORY="$3"
 	CONFIG="$SERVER_CONFIG"
 
 	#test auth with admin user (from config)
@@ -2260,6 +2292,13 @@ function promote()
 	if ! confirm_operation; then
 		return 1
 	fi
+	write_out "Checking if local instance has binary logs"
+	V=`get_server_config log_bin` || return 1
+	if [ $V -eq 0 ]; then
+		write_out "Binary logs disabled - this instance can't be a master"
+		return 1
+	fi
+
 	write_out "Checking if local instance is a replica"
 	replica_check_is_replica || return 1
 	write_out "Querying master location"
