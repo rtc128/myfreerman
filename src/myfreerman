@@ -2221,12 +2221,25 @@ function promote()
 	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST true >/dev/null || return 1
 	echo -n "Please type replication user [$REPL_USER] password: "
 	read REPL_PASSWD
-	echo "Listing all replicas"
+	write_out "Listing all replicas"
 	QUERY="select host from information_schema.processlist where user = '$REPL_USER'"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-	OLD_MYSQL_PWD=$MYSQL_PWD
+	LOGIN_FILE=~/.mylogin.cnf
+	LOGIN_FILE_PRESENT=0
+	if [ -f $LOGIN_FILE ]; then
+		LOGIN_FILE_PRESENT=1
+		TMP_LOGIN_FILE=`mktemp ~/.mylogin.cnf.XXXXXX`
+		mv $LOGIN_FILE $TMP_LOGIN_FILE
+	fi
 	MYSQL_PWD=$REPL_PASSWD mysql -N -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USER -e "$QUERY" >$BUFF
-	export MYSQL_PWD=$OLD_MYSQL_PWD
+	RC=$?
+	if [ $LOGIN_FILE_PRESENT -eq 1 ]; then
+		mv $TMP_LOGIN_FILE $LOGIN_FILE
+	fi
+	if [ $RC -ne 0 ]; then
+		rm $BUFF
+		return 1
+	fi
 
 	REPLICA_LIST=`cat $BUFF`
 	rm $BUFF
