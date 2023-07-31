@@ -293,26 +293,51 @@ function do_apply_binlog()
 	rm $TMP_SQL $ERR_LOG
 }
 
+function help()
+{
+	echo "$0 [ -h ] [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
+	echo "options:"
+	echo "   h: display this help"
+	echo "   c: use a specific config file"
+	echo "   l: specify format for log file name"
+	echo "   q: quiet mode - do not print release information"
+	echo "   y: assume YES for all questions"
+	echo "   h: print help for command"
+	echo "commands:"
+   echo "   apply"
+   echo "   backup"
+   echo "   drop"
+   echo "   flashback"
+   echo "   list"
+   echo "   init"
+   echo "   promote"
+   echo "   recover"
+   echo "   remove"
+   echo "   restore"
+}
+
 function help_backup()
 {
 	echo "* Make backups"
-	echo "	backup binlog"
-	echo "  		backup binary logs"
-	echo "	backup full"
-	echo "	  	backup full database"
+	echo "- Options"
+	echo "- Parameters"
+	echo "	binlog: backup binary logs"
+	echo "	full: backup full database"
 }
 
 function help_backup_binlog()
 {
-	echo "* Make binary log backups"
-	echo "	backup binlog"
+	echo "* Backup binary logs"
+	echo "- Options"
+	echo "- Parameters"
 }
 
 function help_backup_full()
 {
-	echo "* Make full database backups"
-	echo "	backup full [ -d <dir> ]"
-	echo "		-d: Save backup in <dir>, instead of directory set in configuration"
+	echo "* Backup full database"
+	echo "- Options: [ -d <dir> ]"
+	echo "  -d: save backup in <dir>, instead of directory set in configuration"
+	echo "- Parameters"
 }
 
 function help_drop()
@@ -368,6 +393,13 @@ function help_flashback_table()
 	echo "	      optional new table name to receive the result"
    echo "      <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "         hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+}
+
+function help_promote()
+{
+	echo "* Promote local instance to master"
+	echo "- Options"
+	echo "- Parameters"
 }
 
 function help_recover()
@@ -2019,7 +2051,7 @@ function list_remote()
 			list_binlog_remote || return 1
 			;;
 		*)
-			main_help
+			help_list_remote
 			return 1
 			;;
 	esac
@@ -2207,6 +2239,24 @@ function port_available()
 
 function promote()
 {
+	local OPTIND l_opt
+	while getopts "h" l_opt; do
+		case $l_opt in
+			h)
+				help_promote
+				return 0
+				;;
+			\?)
+				help_promote
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 0 ]; then
+		help_promote
+		return 1
+	fi
 	if ! confirm_operation; then
 		return 1
 	fi
@@ -2333,7 +2383,7 @@ function query()
 			query_backup_age || return 1
 			;;
 		*)
-			main_help
+			help_query
 			;;
 	esac
 }
@@ -3501,7 +3551,7 @@ function run()
 	while getopts "hl:c:qy" opt; do
 		case $opt in
 			h)
-				main_help
+				help
 				;;
 			l)
 				LOG_FILE_BASENAME=`date "+$OPTARG"` || return 1
@@ -3516,7 +3566,7 @@ function run()
 				ANSWER_YES=1
 				;;
 			\?)
-				main_help
+				help
 				return 1
 				;;
 		esac
@@ -3528,7 +3578,7 @@ function run()
 		header
 	fi
 	if [ $# -lt 1 ]; then
-		main_help
+		help
 		return 1
 	fi
 	read_config || return 1
@@ -3596,7 +3646,7 @@ function run()
 			;;
 		*)
 			echo "Invalid command: $CMD" >&2
-			main_help
+			help
 			return 1
 			;;
 	esac
@@ -3681,27 +3731,6 @@ function uncompress_backup()
 	BKP="$1"
 	TAR_FILE="${BASE_BACKUP_DIR}/${BKP}.tgz"
 	tar -C "${BASE_BACKUP_DIR}" -x -z -f "${TAR_FILE}" || return 1
-}
-
-function main_help()
-{
-	echo "$0 [ -h ] [ -c <config file> ] [ -l <log file format> ] [ -q ] [ -y ] <command> [ -h ] ..."
-	echo "options:"
-	echo "   h: display this help"
-	echo "   c: use a specific config file"
-	echo "   l: specify format for log file name"
-	echo "   q: quiet mode - do not print release information"
-	echo "   y: assume YES for all questions"
-	echo "   h: print help for command"
-	echo "commands:"
-   echo "   apply"
-   echo "   backup"
-   echo "   list"
-   echo "   init"
-   echo "   drop"
-   echo "   recover"
-   echo "   remove"
-   echo "   restore"
 }
 
 function wait_server_start()
