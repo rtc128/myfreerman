@@ -17,6 +17,7 @@ function replica_wait_for_transaction()
 	local EXPECTED_GTID=$1
 	local LAST_GTID=`replica_query_last_transaction`
 
+	sleep 5
 	while [ "$LAST_GTID" != "$EXPECTED_GTID" ]; do
 		if [ $ELAPSED_TIME -gt $MAX_TIMEOUT ]; then
 			return 1

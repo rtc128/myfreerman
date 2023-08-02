@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.3
+RELEASE=2.5.4
 
 function backup()
 {
@@ -2315,7 +2315,7 @@ function promote()
 		write_out "Cannot check replica delay"
 		return 1
 	fi
-	if [ $DELAY -gt 3000 ]; then
+	if [ $DELAY -gt 5 ]; then
 		write_out "Replica delay is too high [$DELAY]"
 		return 1
 	fi
