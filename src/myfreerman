@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.4
+RELEASE=2.5.5
 
 function backup()
 {
@@ -2351,6 +2351,7 @@ function promote()
 	write_out "Enabling SUPER-READ-ONLY mode in master"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	mysql -h $MASTER_HOST -P $MASTER_PORT -e "set global super_read_only = on" || return 1
+	sleep 3
 
 	write_out "Querying last transaction executed in master"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
