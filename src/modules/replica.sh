@@ -13,6 +13,7 @@ function replica_check_is_replica()
 
 function replica_wait_for_transaction()
 {
+	local ELAPSED_TIME=0
 	local MAX_TIMEOUT=10
 	local EXPECTED_GTID=$1
 	local LAST_GTID=`replica_query_last_transaction`
@@ -22,6 +23,7 @@ function replica_wait_for_transaction()
 		if [ $ELAPSED_TIME -gt $MAX_TIMEOUT ]; then
 			return 1
 		fi
+		((ELAPSED_TIME++))
 		sleep 1
 		LAST_GTID=`replica_query_last_transaction`
 	done

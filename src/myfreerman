@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.5
+RELEASE=2.5.6
 
 function backup()
 {
@@ -419,6 +419,7 @@ function help_flashback_table()
 function help_promote()
 {
 	echo "* Promote local instance to master"
+	echo "Event scheduler is disabled in old master and enabled in new master"
 	echo "- Options: [ -h ]"
 	echo "  -h: display this help and exit"
 	echo "- Parameters:"
@@ -2271,6 +2272,7 @@ function port_available()
 
 function promote()
 {
+	local MAX_DELAY=5
 	local OPTIND l_opt
 	while getopts "h" l_opt; do
 		case $l_opt in
@@ -2315,7 +2317,7 @@ function promote()
 		write_out "Cannot check replica delay"
 		return 1
 	fi
-	if [ $DELAY -gt 5 ]; then
+	if [ $DELAY -gt $MAX_DELAY ]; then
 		write_out "Replica delay is too high [$DELAY]"
 		return 1
 	fi
@@ -2393,6 +2395,17 @@ function promote()
 
 	write_out "Persisting disabled SUPER-READ-ONLY mode in new master"
 	crudini --set $SERVER_CONFIG mysqld super_read_only off
+
+	write_out "Disabling scheduler in old master"
+	CMD="crudini --set $SERVER_CONFIG mysqld event_scheduler off"
+	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST "$CMD" >/dev/null || return 1
+	QUERY="set global event_scheduler=off"
+	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY" || return 1
+
+	write_out "Enabling scheduler in new master"
+	crudini --set $SERVER_CONFIG mysqld event_scheduler on
+	QUERY="set global event_scheduler=on"
+	mysql $TARGET_CRED_OPT -P $MASTER_PORT -e "$QUERY" || return 1
 
 	write_out "Setting new master in other replicas"
 	for R in $REPLICA_LIST; do
