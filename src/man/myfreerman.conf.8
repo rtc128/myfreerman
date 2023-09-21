@@ -62,14 +62,14 @@ restore_write_threads: Number of threads that will write data in restore operati
 
 retention_period: Backup retention period (days).
 
-slave_server: Hostname and port of the slave server that is receiving updates from this master. Format: <host>[:<port>]. Default port is 3306.
-   DEFAULT: no slave is configured.
+slave_server: Hostname [ and port ] of each replipca instance that is receiving updates from this master. Format: <host>[:<port>][,<host>[:<port>]][...]. Default port is 3306.
+   DEFAULT: no replica is set.
 
 working_file: File where current operation context will be saved. For instance, APPLY BINLOG command needs this file. Cannot be shared between instances on the same server.
    DEFAULT: /var/lib/mysql/myfreerman.work
 
 use_rclone: 0 => use MEB for database restoration; 1 => use RCLONE for database restoration
-   DEFAULT: 0
+   DEFAULT: 1
 
 .SH EXAMPLE
 

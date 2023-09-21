@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.6
+RELEASE=2.5.7
 
 function backup()
 {
@@ -366,7 +366,7 @@ function help_init()
 	echo "  -h: display this help and exit"
 	echo "- Parameters:"
 	echo "   database"
-	echo "   slave "
+	echo "   replica"
 }
 
 function help_init_database
@@ -377,12 +377,13 @@ function help_init_database
 	echo "- Parameters:"
 }
 
-function help_init_slave
+function help_init_replica
 {
-	echo "* Initialize a new slave"
+	echo "* Initialize a new replica"
 	echo "- Options: [ -h ] -m <master host>[:<port>] -u <user> -d <directory>"
 	echo "  -h: display this help and exit"
 	echo "  -m: use master in <master host>[:<port>]"
+	echo "  -u: use <user> to connect to master instance"
 	echo "  -d: restore master backup from <directory>"
 	echo "- Parameters:"
 }
@@ -428,14 +429,14 @@ function help_promote()
 function help_recover()
 {
 	echo "* Recover data"
-	echo "	recover slave"
-	echo "		Apply needed binary logs in slave, using master backup directory"
+	echo "	recover replica"
+	echo "		Apply needed binary logs in replica, using master backup directory"
 }
 
-function help_recover_slave()
+function help_recover_replica()
 {
-	echo "* Apply needed binary logs in slave, using master backup directory"
-	echo "	recover slave <dir>"
+	echo "* Apply needed binary logs in replica, using master backup directory"
+	echo "	recover replica <dir>"
 	echo "		<dir>: master backup directory"
 }
 
@@ -467,12 +468,13 @@ function help_restore_config()
 function help_restore_database()
 {
 	echo "* Restore a database from backup"
-   echo "   restore database [ -n ] [ -o <dir> ] [ -p <timestamp> ] [ -s <schema>[:<new name>] ] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>] [ ... ] ] ]"
+   echo "   restore database [ -n ] [ -o <dir> ] [ -p <timestamp> ] [ -R ] [ -s <schema>[:<new name>] ] | [ -t <schema1.table1[:<new name>]> [ -t <schema2.table2[:<new name>] [ ... ] ] ]"
    echo "      -n do not create a new database incarnation"
    echo "      -o use backup saved in <dir>, and not directory set in configuration (also, do not create a new database incarnation)"
    echo "      -p restore until <timestmap>"
    echo "         <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+   echo "      -R Do not apply binlogs"
    echo "      -s Restore only specific schema (optionally using a new name)"
    echo "      -t Restore only specific table (optionally using a new name)"
    echo "         Multiple -t options are allowed"
@@ -732,14 +734,14 @@ function check_depends()
 function check_empty_target_database()
 {
 	#datadir must be empty
-	if ls -d "$DATADIR"/* >/dev/null 2>&1; then
-		write_out "Data directory [$DATADIR] must be empty"
-		return 1
-	fi
+	#if ls -d "$DATADIR"/* >/dev/null 2>&1; then
+		#write_out "Data directory [$DATADIR] must be empty"
+		#return 1
+	#fi
 
 	#check there is no binary log
 	if [ -n "$BINLOG_PREFIX" ] && ls "$BINLOG_PREFIX"* >/dev/null 2>&1; then
-		write_out "No binary logs [${BINLOG_PREFIX}*] might exist"
+		write_out "No binary logs [${BINLOG_PREFIX}*] should exist"
 		return 1
 	fi
 
@@ -751,7 +753,7 @@ function check_empty_target_database()
 
 	#check there is no relay log
 	if [ -n "$RELAY_LOG_PREFIX" ] && ls "$RELAY_LOG_PREFIX"* >/dev/null 2>&1; then
-		write_out "No relay logs [${RELAY_LOG_PREFIX}*] might exist"
+		write_out "No relay logs [${RELAY_LOG_PREFIX}*] should exist"
 		return 1
 	fi
 
@@ -765,16 +767,16 @@ function check_empty_target_database()
 function check_purge_binlogs()
 {
 	if [ -n "$SLAVE_SERVER" -a $USE_AUX_INSTANCE -eq 0 ]; then
-		LIMIT_LOG=`get_current_slave_binlog`
+		LIMIT_LOG=`get_current_replica_binlog`
 	else
 		LIMIT_LOG=$1
 	fi
 	if [ $? -ne 0 ]; then
-		write_out "Cannot contact slave server - no binary log will be purged"
+		write_out "Cannot contact replica instance - no binary log will be purged"
 		return
 	fi
 	if [ -z "$LIMIT_LOG" ]; then
-		write_out "Cannot retrieve slave server's current slave status - no binary log will be purged"
+		write_out "Cannot retrieve replica server's current status - no binary log will be purged"
 		return
 	fi
 	purge_binlogs $LIMIT_LOG || return 1
@@ -857,7 +859,6 @@ function check_target_instance_config()
 		fi
 	fi
 
-
 	LOG_ERROR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	if [ -z "$LOG_ERROR" ]; then
 		write_out "MySQL configuration mysqld:log_error cannot be empty"
@@ -881,18 +882,12 @@ function check_target_instance_config()
 		rm $TMP_LOG $TMP_CONF
 		return 1
 	fi
-	mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 &
-	PID=$!
-	SOCKET="$SERVER_SOCKET"
-	if ! wait_server_start $PID "$TMP_CONF"; then
-		write_out "Cannot check target instance configuration. Check server logs in '$LOG_ERROR'."
-		drop_target_database
-		rm $TMP_LOG $TMP_CONF
-		return 1
-	fi
-	kill_pid "$PID_FILE"
-	rm $TMP_LOG $TMP_CONF
-	drop_target_database || return 1
+	rm $TMP_LOG
+	mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 --daemonize
+	RC=$?
+	rm $TMP_CONF
+	drop_target_database
+	[ $RC -eq 0 ] || return 1
 }
 
 function confirm_operation()
@@ -1409,7 +1404,7 @@ function get_current_master_binlog_sequence()
 	expr $LONG_SEQ + 0
 }
 
-function get_current_slave_binlog()
+function get_current_replica_binlog()
 {
 	MIN_LOG=999999
 	SLAVE_SERVERS=`echo $SLAVE_SERVER | tr "," "\n"`
@@ -1421,10 +1416,10 @@ function get_current_slave_binlog()
 		fi
 		CRED_OPT=`mount_target_credentials_opt`
 
-#before getting slave status, check if we can reach it
+		#before getting replica status, check if we can reach it
 		RESULT=1
 		if mysqladmin --defaults-file="$SERVER_CONFIG" --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $CRED_OPT status >/dev/null; then
-			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show slave status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
+			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show replica status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
 			if [ $? -ne 0 ]; then
 				return $?
 			fi
@@ -1626,8 +1621,8 @@ function init()
 		database)
 			init_database $* || return 1
 			;;
-		slave)
-			init_slave $* || return 1
+		replica)
+			init_replica $* || return 1
 			;;
 		*)
 			help_init
@@ -1846,7 +1841,7 @@ function init_database()
 	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
-function init_slave()
+function init_replica()
 {
 	local OPTIND l_opt
 	while getopts "d:hm:u:" l_opt; do
@@ -1855,7 +1850,7 @@ function init_slave()
 				BACKUP_DIRECTORY="$OPTARG"
 				;;
 			h)
-				help_init_slave
+				help_init_replica
 				return 0
 				;;
 			m)
@@ -1865,7 +1860,7 @@ function init_slave()
 				REPL_USERNAME=$OPTARG
 				;;
 			\?)
-				help_init_slave
+				help_init_replica
 				return 1
 				;;
 		esac
@@ -1873,7 +1868,7 @@ function init_slave()
 	shift $((OPTIND-1))
 
 	if [ $# -ne 0 ]; then
-		help_init_slave
+		help_init_replica
 		return 1
 	fi
 
@@ -1920,23 +1915,27 @@ function init_slave()
 	restore database -n -o "$BACKUP_DIRECTORY" || exit 1
 
 	#start server
-	INST_TYPE=slave
+	INST_TYPE=replica
 	mysql_start || return 1
 
 	SOCKET="`crudini --get \"$SERVER_CONFIG\" $INI_SECTION socket 2>/dev/null`"
-	#query binlog info at the time of the backup
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 
-	#mount command to config slave
-	CMD="change replication source to source_host='$MASTER_HOST', source_port=$MASTER_PORT, source_auto_position=1, source_ssl=1, source_user='$REPL_USERNAME', source_password='$REPL_PASSWD'";
-	write_out "Setting new slave configuration"
+	#mount command to config replica
+	write_out "Setting new replica configuration"
+	CMD="reset replica all";
 	if ! mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD"; then
 		mysql_stop || return 1
 		return 1
 	fi
-	start_slave || { mysql_stop; return 1; }
+	CMD="change replication source to source_host='$MASTER_HOST', source_port=$MASTER_PORT, source_auto_position=1, source_ssl=1, source_user='$REPL_USERNAME', source_password='$REPL_PASSWD'";
+	if ! mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD"; then
+		mysql_stop || return 1
+		return 1
+	fi
+	start_replica || { mysql_stop; return 1; }
 	sleep 10
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show replica status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
 	mysql_stop
 	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
@@ -2167,39 +2166,6 @@ function mount_limit_memory_option()
 	fi
 }
 
-function mount_reset_slave_command()
-{
-	ALIAS=`mount_slave_command_alias` || return 1
-	echo "reset $ALIAS"
-}
-
-function mount_slave_command_alias()
-{
-	VERSION_LINE=`mysqld -V` || return 1
-	FULL_VER=`echo $VERSION_LINE | awk '{ print $3; }'`
-	ONLY_NUM=`echo $FULL_VER | cut -d - -f 1`
-	MAJOR=`echo $ONLY_NUM | cut -d . -f 1`
-	MINOR=`echo $ONLY_NUM | cut -d . -f 2`
-	PATCH=`echo $ONLY_NUM | cut -d . -f 3`
-
-	[ $MAJOR -ge 8 ] || { echo "slave"; return; }
-	[ $MINOR -eq 0 ] || { echo "replica"; return; }
-	[ $PATCH -ge 26 ] || { echo "slave"; return; }
-	echo "replica"
-}
-
-function mount_start_slave_command()
-{
-	ALIAS=`mount_slave_command_alias` || return 1
-	echo "start $ALIAS"
-}
-
-function mount_stop_slave_command()
-{
-	ALIAS=`mount_slave_command_alias` || return 1
-	echo "stop $ALIAS"
-}
-
 function mount_target_credentials_opt()
 {
 	RESULT=
@@ -2220,7 +2186,7 @@ function mysql_start()
 {
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off --disable-log-bin"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off --disable-log-bin --skip-replica-start"
 	write_out "Starting server (${INST_TYPE})"
 	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
 	PID=$!
@@ -2650,7 +2616,7 @@ function read_rman_config()
 	USE_RCLONE="`crudini --get "$RMAN_CONFIG" $INI_SECTION use_rclone 2>/dev/null`"
 	#default: 0
 	if [ -z "$USE_RCLONE" ]; then
-		USE_RCLONE=0
+		USE_RCLONE=1
 	fi
 
 	check_config || return 1
@@ -2730,6 +2696,15 @@ function apply_binlog()
 	CONFIG="$SERVER_CONFIG"
 
 	#if not validated, no restore was previously done
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	mkdir -p "$WORKING_DIR" 2>$BUFF
+	RC=$?
+	ERR_MSG=`cat $BUFF`
+	rm $BUFF
+	if [ $RC -ne 0 ]; then
+		write_out "Cannot create directory '$WORKING_DIR': $ERR_MSG"
+		return 1
+	fi
 	FPATH="$WORKING_DIR/restore.ini"
 	VAL=`crudini --get "$FPATH" recovery validated 2>/dev/null`
 	if [ "$VAL" != "1" ]; then
@@ -2773,31 +2748,31 @@ function recover()
 	CMD=$1
 	shift
 	case $CMD in
-		slave)
-			recover_slave $* || return 1;;
+		replica)
+			recover_replica $* || return 1;;
 		*)
 			help_recover; return 1;;
 	esac
 }
 
-function recover_slave()
+function recover_replica()
 {
 	local OPTIND l_opt
 	while getopts "h" l_opt; do
 		case $l_opt in
 			h)
-				help_recover_slave
+				help_recover_replica
 				return
 				;;
 			\?)
-				help_recover_slave
+				help_recover_replica
 				return 1
 				;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ $# -ne 1 ]; then
-		help_recover_slave
+		help_recover_replica
 		return 1
 	fi
 	BACKUP_DIR="$1"
@@ -2819,7 +2794,7 @@ function recover_slave()
 
 	#identify next binlog and position
 	OUT=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show slave status\G" >$OUT 2>$ERR
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show replica status\G" >$OUT 2>$ERR
 	RC=$?
 	write_file_out $ERR
 	rm $ERR
@@ -2850,8 +2825,8 @@ function recover_slave()
 	write_file_out $ERR
 	[ $RC -eq 0 ] || { rm $ERR; return 1; }
 
-	stop_slave || { rm $ERR; return 1; }
-	reset_slave || { rm $ERR; return 1; }
+	stop_replica || { rm $ERR; return 1; }
+	reset_replica || { rm $ERR; return 1; }
 
 	#apply first binlog
 	SHORT_SEQ=`expr $LONG_SEQ + 0`
@@ -2894,7 +2869,7 @@ function recover_slave()
 		write_file_out $ERR
 		[ $RC -eq 0 ] || { rm $ERR; return 1; }
 	done
-	start_slave
+	start_replica
 	rm $ERR
 }
 
@@ -3080,14 +3055,17 @@ function restore_config()
 
 function restore_database()
 {
+	local DO_BINLOGS=1
 	DORESET=1
 	PITR=0
 	RESTORE_TABLE_LIST=
 	REQ_TIMESTAMP=
 	CUR_SOCKET="$SERVER_SOCKET"
 	local OPTIND l_opt
-	while getopts "hno:s:p:t:" l_opt; do
+	while getopts "hno:Rs:p:t:" l_opt; do
 		case $l_opt in
+			R)
+				DO_BINLOGS=0;;
 			s)
 				RESTORE_SCHEMA=${OPTARG}
 				;;
@@ -3252,10 +3230,19 @@ function restore_database()
 	else
 		restore_aux_instance $DIR || return 1
 	fi
-	if [ $SLAVE -eq 1 ]; then
+	if [ $REPLICA -eq 1 ]; then
 		return
 	fi
 
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	mkdir -p "$WORKING_DIR" 2>$BUFF
+	RC=$?
+	ERR_MSG=`cat $BUFF`
+	rm $BUFF
+	if [ $RC -ne 0 ]; then
+		write_out "Cannot create directory '$WORKING_DIR': $ERR_MSG"
+		return 1
+	fi
 	FPATH="$WORKING_DIR/restore.ini"
 	if [ $USE_AUX_INSTANCE -eq 0 ]; then
 		TS=`date +%Y-%m-%d_%H-%M-%S`
@@ -3290,14 +3277,22 @@ function restore_database()
 		LOG_ERROR="$AUX_LOG_ERROR"
 		SOCKET="$AUX_SOCKET"
 	fi
-	do_apply_binlog "$SOCKET" $BASE_BACKUP || return 1
+	if [ $DO_BINLOGS -eq 1 ]; then
+		do_apply_binlog "$SOCKET" $BASE_BACKUP || return 1
+	else
+		INST_TYPE="restricted"
+		if [ $USE_AUX_INSTANCE -eq 1 ]; then
+			INST_TYPE="aux"
+		fi
+		mysql_start || return 1
+	fi
 	if [ -n "$RESTORE_SCHEMA_OLD_NAME" ]; then
 		copy_recovered_db || { mysql_stop && return 1; }
 	fi
 	if [ -n "$RESTORE_TABLE_LIST" ]; then
 		copy_restored_tables || { mysql_stop "$CONFIG" $ITYPE && return 1; }
 	fi
-	if [ $USE_AUX_INSTANCE -eq 0 -a $DORESET -eq 1 ]; then
+	if [ $USE_AUX_INSTANCE -eq 0 -a $DORESET -eq 1 -a $DO_BINLOGS -eq 1 ]; then
 		create_incarnation $MOMENT
 		reset_master || return 1
 	fi
@@ -3399,10 +3394,10 @@ function restore_target_instance()
 			REDODIR="$DATADIR/$REDODIR"
 		fi
 		mkdir -p "$REDODIR" || return 1
-		if ls -d "$REDODIR"/* >/dev/null 2>&1; then
-			write_out "Redo directory [$REDODIR] must be empty"
-			return 1
-		fi
+		#if ls -d "$REDODIR"/* >/dev/null 2>&1; then
+			#write_out "Redo directory [$REDODIR] must be empty"
+			#return 1
+		#fi
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$REDODIR" || return 1
 		fi
@@ -3643,7 +3638,7 @@ function run()
 	if [ -z "$MYFREERMAN_MOD_DIR" ]; then
 		MYFREERMAN_MOD_DIR=/usr/lib/myfreerman/modules
 	fi
-	SLAVE=0
+	REPLICA=0
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 
 	#if password in config, set env
@@ -3737,9 +3732,9 @@ function remove()
 	esac
 }
 
-function reset_slave()
+function reset_replica()
 {
-	CMD=`mount_reset_slave_command`
+	CMD="reset replica"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	ERR=`mktemp /tmp/myfreerman.XXXXXX`
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR
@@ -3755,9 +3750,9 @@ function save_recovery_data()
 	crudini --set "$FPATH" recovery restore_time "$REQ_TIMESTAMP"
 }
 
-function start_slave()
+function start_replica()
 {
-	CMD=`mount_start_slave_command`
+	CMD="start replica"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	ERR=`mktemp /tmp/myfreerman.XXXXXX`
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR
@@ -3767,9 +3762,9 @@ function start_slave()
 	[ $RC -eq 0 ] || return 1
 }
 
-function stop_slave()
+function stop_replica()
 {
-	CMD=`mount_stop_slave_command`
+	CMD="stop replica"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	ERR=`mktemp /tmp/myfreerman.XXXXXX`
 	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD" 2>$ERR

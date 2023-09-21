@@ -43,7 +43,7 @@ init
 
 	database
 
-	slave
+	replica
 
 list
 
@@ -59,7 +59,7 @@ promote
 
 recover
 
-	slave
+	replica
 
 remove
 
@@ -91,7 +91,7 @@ It adds support for:
 
 - Creating a new database repository
 
-- Creating a new slave server
+- Creating a new replica instance
 
 - Drop a database
 
@@ -142,7 +142,7 @@ Flashback is not supported for tables that were TRUNCATED.
 
 .B init
 
-Initialize new database, which can be a new master or a slave.
+Initialize new database, which can be a new master or a replica.
 
 
 .B list
