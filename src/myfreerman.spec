@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.5.6
+Version:			 2.5.7
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -49,6 +49,11 @@ install -m 0755 modules/replica.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /var/log/myfreerman/
 
 %changelog
+
+* Thu Sep 21 2023 Rodrigo Tassinari 2.5.7
+- "SLAVE" titles/features changed to "REPLICA"
+- Added option to ignore recovery (apply binlogs) in restoration
+- RCLONE enabled is now default option for restoration
 
 * Mon Aug 7 2023 Rodrigo Tassinari 2.5.6
 - When promoting master, change also EVENT_SCHEDULER config
