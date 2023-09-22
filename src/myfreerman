@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.8
+RELEASE=2.5.9
 
 function backup()
 {
@@ -1428,7 +1428,7 @@ function get_current_replica_binlog()
 		#before getting replica status, check if we can reach it
 		RESULT=1
 		if mysqladmin --defaults-file="$SERVER_CONFIG" --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $CRED_OPT status >/dev/null; then
-			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show replica status\G" | grep Relay_Master_Log_File | cut -d :  -f 2 | sed -e 's/ //'`
+			CUR_LOG=`mysql --host=${SLAVE_HOSTNAME} --port=${SLAVE_PORT} $SLAVE_CRED_OPT -e "show replica status\G" | grep -i relay_source_log_file | cut -d :  -f 2 | sed -e 's/ //'`
 			if [ $? -ne 0 ]; then
 				return $?
 			fi
