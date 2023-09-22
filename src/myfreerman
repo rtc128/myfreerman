@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.7
+RELEASE=2.5.8
 
 function backup()
 {
@@ -307,8 +307,9 @@ function help()
    echo "  backup"
    echo "  drop"
    echo "  flashback"
-   echo "  list"
    echo "  init"
+   echo "  list"
+   echo "  metadata"
    echo "  promote"
    echo "  recover"
    echo "  remove"
@@ -415,6 +416,14 @@ function help_flashback_table()
 	echo "	      optional new table name to receive the result"
    echo "      <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "         hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+}
+
+function help_metadata()
+{
+	echo "* Retrieve metadata from latest full backup"
+	echo "- Options: [ -h ]"
+	echo "  -h: display this help and exit"
+	echo "- Parameters:"
 }
 
 function help_promote()
@@ -2141,6 +2150,46 @@ function load_modules()
 	done
 }
 
+function metadata()
+{
+	local L_BINLOG
+	local L_METAFILE
+	local L_OPT
+	local L_OPTIND
+	local L_SEQ
+
+	while getopts "h" L_OPT; do
+		case $L_OPT in
+			h)
+				help_promote
+				return 0
+				;;
+			\?)
+				help_promote
+				return 1
+				;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ $# -ne 0 ]; then
+		help_metadata
+		return 1
+	fi
+	BASE_BACKUP_DIR="$BACKUP_DIR/base"
+	DIR=`find_base_backup ""` || return 1
+	if [ -z "$DIR" ]; then
+		write_out "No backup found"
+		return 1
+	fi
+	METAFILE=$BASE_BACKUP_DIR/$DIR/meta/backup_variables.txt
+	BINLOG_POSITION=`grep -wi binlog_position $METAFILE | cut -d = -f 2`
+	BINLOG=`echo $BINLOG_POSITION | cut -d : -f 1`
+	SEQ=`echo $BINLOG_POSITION | cut -d : -f 2`
+	echo "Timestamp: $DIR"
+	echo "Binlog: $BINLOG"
+	echo "Sequence: $SEQ"
+}
+
 function mount_credentials_opt()
 {
 	RESULT=
@@ -3678,6 +3727,8 @@ function run()
 		list)
 			list $* || return 1
 			;;
+		metadata)
+			metadata || return 1;;
 		promote)
 			promote $* || return 1
 			;;
