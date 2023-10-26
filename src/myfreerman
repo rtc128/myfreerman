@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.10
+RELEASE=2.5.11
 
 function backup()
 {
@@ -1658,7 +1658,9 @@ function init()
 
 function init_database()
 {
+	local L_BKP
 	local OPTIND l_opt
+
 	while getopts "h" l_opt; do
 		case $l_opt in
 			h)
@@ -1849,6 +1851,7 @@ function init_database()
 	fi
 	LINE=`grep -w password "$LOG_ERROR" | tail -n 1`
 	PASSWORD=`echo ${LINE##* }`
+	write_out "Temp password: $PASSWORD"
 
 	INST_TYPE=init
 	mysql_start || return 1
@@ -1860,9 +1863,24 @@ function init_database()
 	echo "update mysql.user set host = '%' where user = 'root' and host = 'localhost';" >>$SQL
 	echo "flush privileges;" >>$SQL
 	echo "grant resource_group_admin, backup_admin on *.* to root;" >>$SQL
-	MYSQL_PWD="$PASSWORD" mysql --login-path=nopath_xx --connect-expired-password --socket="$SOCKET" -u root <$SQL || echo "If you got an authentication failure, remove password from mysql authentication database and run INIT again"
+
+	#create expect script
+	EXPECT_SCRIPT=`mktemp /tmp/myfreerman.XXXXXX`
+	echo "spawn mysql -S $SOCKET --connect-expired-password -u root -p -e \"source $SQL\"" >$EXPECT_SCRIPT
+	echo "expect \" password:\"" >>$EXPECT_SCRIPT
+	echo "send \"$PASSWORD\\r\"" >>$EXPECT_SCRIPT
+	echo "interact" >>$EXPECT_SCRIPT
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	expect $EXPECT_SCRIPT >$BUFF 2>&1
+	RC=$?
+	rm $EXPECT_SCRIPT $SQL
 	mysql_stop
-	rm $SQL
+	cat $BUFF >&2
+	if [ $RC -ne 0 ]; then
+		rm $BUFF
+		return 1
+	fi
+	rm $BUFF
 	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
 
@@ -2251,25 +2269,14 @@ function mysql_start()
 {
 	LOG_ERROR="`crudini --get \"$CONFIG\" $SERVER_INI_SECTION log_error 2>/dev/null`"
 	CMD="mysqld"
-	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off --disable-log-bin --skip-replica-start"
+	OPTS="--defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$CONFIG" --bind-address=127.0.0.1 --console --super-read-only=off --event-scheduler=off --disable-log-bin --skip-replica-start --daemonize"
 	write_out "Starting server (${INST_TYPE})"
-	$CMD $OPTS >"$LOG_ERROR" 2>&1 &
-	PID=$!
-	sleep 3
-	COUNT=3
-	while [ $COUNT -lt $SERVER_START_TIMEOUT ]; do
-		if mysqladmin --defaults-file="$SERVER_CONFIG" -s --socket="$SOCKET" ping >/dev/null; then
-			return 0
-		fi
-		if ! kill -0 $PID 2>/dev/null; then
-			write_out "Cannot start server - check logs in '$LOG_ERROR'"
-			return 1
-		fi
-		sleep 1
-		COUNT=$((COUNT + 1))
-	done
-	write_out "Timeout reached waiting for server to start. I'm quiting and leaving server as is. Please check server config in file '$CONFIG'"
-	return 1
+	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	$CMD $OPTS >"$LOG_ERROR" >$BUFF 2>&1
+	RC=$?
+	cat $BUFF
+	rm $BUFF
+	return $RC
 }
 
 function mysql_stop()
