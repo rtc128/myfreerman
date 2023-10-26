@@ -1,12 +1,12 @@
 Name:           myfreerman
-Version:			 2.5.10
+Version:			 2.5.11
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 BuildArch:      noarch
 License:			 GPL
 Source0:			 myfreerman.tar.gz
-Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-commercial-backup, rclone
+Requires:		 crudini >= 0.3, bc, mysql-commercial-server, mysql-commercial-backup, rclone, expect
 
 %description
 MyFreeRMan uses MEB to create/restore backups of MySQL databases.
@@ -49,6 +49,9 @@ install -m 0755 modules/replica.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /var/log/myfreerman/
 
 %changelog
+
+* Thu Oct 26 2023 Rodrigo Tassinari 2.5.11
+- Use Expect to create new database instance
 
 * Tue Sep 26 2023 Rodrigo Tassinari 2.5.10
 - New option to keep binary logs
