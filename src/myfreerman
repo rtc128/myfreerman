@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.11
+RELEASE=2.5.12
 
 function backup()
 {
@@ -910,6 +910,8 @@ function check_target_instance_config()
 	rm $TMP_LOG
 	mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --bind-address=127.0.0.1 --daemonize
 	RC=$?
+	kill_pid "$PID_FILE"
+	sleep 2
 	rm $TMP_CONF
 	drop_target_database
 	[ $RC -eq 0 ] || return 1
@@ -1477,6 +1479,7 @@ function header()
 function kill_pid()
 {
 	PID_FILE="$1"
+	[ -f "$PID_FILE" ] || return 0
 	PID=`cat "$PID_FILE"`
 	kill $PID
 	sleep 1
