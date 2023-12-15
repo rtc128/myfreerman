@@ -383,84 +383,94 @@ function _list_one_binlog_transactions()
 		#INSERT?
 		if [[ "$LINE" =~ "### INSERT ".* ]]; then
 			((TOTAL++))
-			#get table name
-			TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
-			TABLE_NAME=${TABLE_NAME//\`/}
+			if [ $SUMMARY -eq 0 ]; then
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+				TABLE_NAME=${TABLE_NAME//\`/}
 
-			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-				INS_TAB[$TABLE_NAME]=1
-			else
-				INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
-			fi
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+					INS_TAB[$TABLE_NAME]=1
+				else
+					INS_TAB[$TABLE_NAME]=`expr ${INS_TAB[$TABLE_NAME]} + 1`
+				fi
 
-			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-				UPD_TAB[$TABLE_NAME]=0
-			fi
-			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-				DEL_TAB[$TABLE_NAME]=0
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+					UPD_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+					DEL_TAB[$TABLE_NAME]=0
+				fi
 			fi
 		fi
 		#UPDATE?
 		if [[ "$LINE" =~ "### UPDATE ".* ]]; then
 			((TOTAL++))
-			#get table name
-			TABLE_NAME=`echo "$LINE" | cut -d \  -f 3`
-			TABLE_NAME=${TABLE_NAME//\`/}
+			if [ $SUMMARY -eq 0 ]; then
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 3`
+				TABLE_NAME=${TABLE_NAME//\`/}
 
-			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-				UPD_TAB[$TABLE_NAME]=1
-			else
-				UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
-			fi
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+					UPD_TAB[$TABLE_NAME]=1
+				else
+					UPD_TAB[$TABLE_NAME]=`expr ${UPD_TAB[$TABLE_NAME]} + 1`
+				fi
 
-			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-				INS_TAB[$TABLE_NAME]=0
-			fi
-			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-				DEL_TAB[$TABLE_NAME]=0
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+					INS_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+					DEL_TAB[$TABLE_NAME]=0
+				fi
 			fi
 		fi
 		#DELETE?
 		if [[ "$LINE" =~ "### DELETE ".* ]]; then
 			((TOTAL++))
-			#get table name
-			TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
-			TABLE_NAME=${TABLE_NAME//\`/}
+			if [ $SUMMARY -eq 0 ]; then
+				#get table name
+				TABLE_NAME=`echo "$LINE" | cut -d \  -f 4`
+				TABLE_NAME=${TABLE_NAME//\`/}
 
-			if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
-				DEL_TAB[$TABLE_NAME]=1
-			else
-				DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
-			fi
+				if [ -z "${DEL_TAB[$TABLE_NAME]}" ]; then
+					DEL_TAB[$TABLE_NAME]=1
+				else
+					DEL_TAB[$TABLE_NAME]=`expr ${DEL_TAB[$TABLE_NAME]} + 1`
+				fi
 
-			if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
-				INS_TAB[$TABLE_NAME]=0
-			fi
-			if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
-				UPD_TAB[$TABLE_NAME]=0
+				if [ -z "${INS_TAB[$TABLE_NAME]}" ]; then
+					INS_TAB[$TABLE_NAME]=0
+				fi
+				if [ -z "${UPD_TAB[$TABLE_NAME]}" ]; then
+					UPD_TAB[$TABLE_NAME]=0
+				fi
 			fi
 		fi
 
 		#if ending txn, print that
 		if [[ "$LINE" =~ ^"COMMIT" ]]; then
-			local T_DATA=
-			for TABLE in "${!INS_TAB[@]}"; do
-				FINAL_TABLE=$TABLE
-				#check if it is default schema
-				if [ -n "$DEFAULT_SCHEMA" ]; then
-					SCHEMA=`echo $TABLE | cut -d . -f 1`
-					BASE_TABLE=`echo $TABLE | cut -d . -f 2`
-					if [ "$DEFAULT_SCHEMA" == "$SCHEMA" ]; then
-						FINAL_TABLE=$BASE_TABLE
+			if [ $SUMMARY -eq 0 ]; then
+				local T_DATA=
+				for TABLE in "${!INS_TAB[@]}"; do
+					FINAL_TABLE=$TABLE
+					#check if it is default schema
+					if [ -n "$DEFAULT_SCHEMA" ]; then
+						SCHEMA=`echo $TABLE | cut -d . -f 1`
+						BASE_TABLE=`echo $TABLE | cut -d . -f 2`
+						if [ "$DEFAULT_SCHEMA" == "$SCHEMA" ]; then
+							FINAL_TABLE=$BASE_TABLE
+						fi
 					fi
-				fi
 
-				INS="${INS_TAB[$TABLE]}"
-				UPD="${UPD_TAB[$TABLE]}"
-				DEL="${DEL_TAB[$TABLE]}"
-				T_DATA="${T_DATA}${FINAL_TABLE}:${INS},${UPD},${DEL};"
-			done
-			printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA
+					INS="${INS_TAB[$TABLE]}"
+					UPD="${UPD_TAB[$TABLE]}"
+					DEL="${DEL_TAB[$TABLE]}"
+					T_DATA="${T_DATA}${FINAL_TABLE}:${INS},${UPD},${DEL};"
+				done
+				printf "%-10s %-8s %s\n" $TIMESTAMP $TOTAL $T_DATA
+			else
+				printf "%-10s %-8s\n" $TIMESTAMP $TOTAL
+			fi
 
 			INS_TAB=()
 			UPD_TAB=()
