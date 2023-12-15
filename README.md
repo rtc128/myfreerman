@@ -1,8 +1,8 @@
 # myfreerman - MySQL Enterprise Backup wrapper
 
-Version: 1
+Version: 2
 
-Release: 1.4.15
+Release: 2.5.13
 
 Summary: Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
