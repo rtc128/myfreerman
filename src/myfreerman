@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.13
+RELEASE=2.5.14
 
 function backup()
 {
@@ -441,7 +441,8 @@ function help_metadata()
 function help_promote()
 {
 	echo "* Promote local instance to master"
-	echo "Event scheduler is disabled in old master and enabled in new master"
+	echo "Event scheduler is disabled in old master and enabled in new master. Replica that is to be promoted (local instance) must be synchronized."
+	echo "Other replicas are redirected to new master."
 	echo "- Options: [ -h ]"
 	echo "  -h: display this help and exit"
 	echo "- Parameters:"
