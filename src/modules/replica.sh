@@ -11,6 +11,25 @@ function replica_check_is_replica()
 	fi
 }
 
+#wait until it's 0 seconds behind master
+function replica_wait_for_sync()
+{
+	local ELAPSED_TIME=0
+	local MAX_TIMEOUT=10
+	local LAST_GTID=`replica_query_last_transaction`
+
+	DELAY=`replica_query_delay` || return 1
+	while [ $DELAY -ne 0 ]; do
+		if [ $ELAPSED_TIME -gt $MAX_TIMEOUT ]; then
+			write_out "Timeout reached waiting for replica to be fully in sync"
+			return 1
+		fi
+		((ELAPSED_TIME++))
+		sleep 1
+		DELAY=`replica_query_delay` || return 1
+	done
+}
+
 function replica_wait_for_transaction()
 {
 	local ELAPSED_TIME=0

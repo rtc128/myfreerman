@@ -1981,8 +1981,8 @@ function init_replica()
 		return 1
 	fi
 	start_replica || { mysql_stop; return 1; }
-	sleep 10
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show replica status\G" | grep -E "Slave_SQL_Running_State|Last_IO_Error|Seconds_Behind_Master|Slave_IO_State"
+	sleep 5
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "show replica status\G" | grep -iwE 'replica_sql_running_state|last_io_error|seconds_behind_source|replica_io_state' | tr -s ' '
 	mysql_stop
 	[ $REPORT_FINISHED -eq 0 ] || write_out "Finished"
 }
@@ -2318,7 +2318,7 @@ function port_available()
 
 function promote()
 {
-	local MAX_DELAY=5
+	local MAX_DELAY=3
 	local OPTIND l_opt
 	while getopts "h" l_opt; do
 		case $l_opt in
@@ -2399,16 +2399,21 @@ function promote()
 	write_out "Enabling SUPER-READ-ONLY mode in master"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	mysql -h $MASTER_HOST -P $MASTER_PORT -e "set global super_read_only = on" || return 1
-	sleep 3
 
-	write_out "Querying last transaction executed in master"
-	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
-	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "show master status\G" >$BUFF || { rm $BUFF; return 1; }
-	LAST_GTID_MASTER=`grep -i executed_gtid_set $BUFF | awk '{ print $NF }'`
-	rm $BUFF
-	write_out "Waiting for local replica to apply last executed transaction"
-	replica_wait_for_transaction $LAST_GTID_MASTER
+	write_out "Waiting for local replica to be 0 seconds behind master"
+	local SLEEP_TIME=$((MAX_DELAY + 2))
+	sleep $SLEEP_TIME
+	replica_wait_for_sync || return 1
+
+	write_out "Querying current binlog and position in local replica"
+	TMP=`binlog_get_current_master_binlog` || return 1
+	SHORT_SEQ=`echo $TMP | cut -d : -f 1`
+	LONG_SEQ=`printf %06d $SHORT_SEQ`
+	BINLOG_NAME=binlog.$LONG_SEQ
+	BINLOG_POSITION=`echo $TMP | cut -d : -f 2`
+
+	write_out "Querying current binlog sequence in local replica"
+	BINLOG_SEQ=`get_current_master_binlog_sequence` || return 1
 
 	write_out "Disabling READ-ONLY mode in local replica"
 	mysql -S "$SERVER_SOCKET" $TARGET_CRED_OPT -e "set global read_only = off" || return 1
@@ -2423,8 +2428,9 @@ function promote()
 
 	write_out "Converting master to replica"
 	HOST_FIRST_NAME=`echo $HOSTNAME | cut -d . -f 1`
-	QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_auto_position = 1, source_ssl = 1"
-	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY" || return 1
+	CHANGE_REPL_SRC_QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_log_file = '$BINLOG_NAME', source_log_pos = $BINLOG_POSITION, source_ssl = 1"
+	CHANGE_REPL_SRC_QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_ssl = 1"
+	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$CHANGE_REPL_SRC_QUERY" || return 1
 	QUERY="start replica"
 	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY" || return 1
 
@@ -2454,15 +2460,24 @@ function promote()
 	mysql $TARGET_CRED_OPT -P $MASTER_PORT -e "$QUERY" || return 1
 
 	write_out "Setting new master in other replicas"
+	SQL=`mktemp /tmp/myfreerman.XXXXXX`
+	echo "stop replica;" >$SQL
+	echo "$CHANGE_REPL_SRC_QUERY;" >>$SQL
+	echo "start replica;" >>$SQL
 	for R in $REPLICA_LIST; do
 		REPLICA_FIRST_NAME=`echo $R | cut -d . -f 1`
 		if [ $REPLICA_FIRST_NAME == $HOST_FIRST_NAME ]; then
 			continue
 		fi
 		write_out "   $REPLICA_FIRST_NAME"
-		QUERY="stop replica; change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_auto_position = 1, source_ssl = 1; start replica;"
-		mysql $TARGET_CRED_OPT -h $REPLICA_FIRST_NAME -e "$QUERY" || return 1
+		mysql $TARGET_CRED_OPT -h $REPLICA_FIRST_NAME <$SQL
+		RC=$?
+		if [ $RC -ne 0 ]; then
+			rm $SQL
+			return 1
+		fi
 	done
+	rm $SQL
 	write_out "Finished"
 }
 
