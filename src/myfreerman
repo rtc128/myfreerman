@@ -393,6 +393,7 @@ function help_init_database
 function help_init_replica
 {
 	echo "* Initialize a new replica"
+	echo "If environment variable MYSQL_REPL_USER_PASSWORD is set, it's used as the password for <user>. If not, the password is asked."
 	echo "- Options: [ -h ] -m <master host>[:<port>] -u <user> -d <directory>"
 	echo "  -h: display this help and exit"
 	echo "  -m: use master in <master host>[:<port>]"
@@ -443,6 +444,7 @@ function help_promote()
 	echo "* Promote local instance to master"
 	echo "Event scheduler is disabled in old master and enabled in new master. Replica that is to be promoted (local instance) must be synchronized."
 	echo "Other replicas are redirected to new master."
+	echo "If environment variable MYSQL_REPL_USER_PASSWORD is set, it's used as the password for replication user. If not, the password is asked."
 	echo "- Options: [ -h ]"
 	echo "  -h: display this help and exit"
 	echo "- Parameters:"
@@ -1949,9 +1951,10 @@ function init_replica()
 		return 1
 	fi
 
-	read -s -p "Replication user password: " REPL_PASSWD
+	REPL_PASSWD="$MYSQL_REPL_USER_PASSWORD"
 	if [ -z "$REPL_PASSWD" ]; then
-		return 1
+		echo -n "Replication user's password: "
+		read REPL_PASSWD
 	fi
 
 	#test auth with replication user
@@ -2358,6 +2361,12 @@ function promote()
 	write_out "Checking SSH connection to master host"
 	ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=no $MASTER_HOST true >/dev/null || return 1
 
+	REPL_PASSWD="$MYSQL_REPL_USER_PASSWORD"
+	if [ -z "$REPL_PASSWD" ]; then
+		echo -n "Please type replication user [$REPL_USER] password: "
+		read REPL_PASSWD
+	fi
+
 	write_out "Checking replica delay"
 	DELAY=`replica_query_delay`
 	if [ -z "$DELAY" -o "$DELAY" == "NULL" ]; then
@@ -2369,8 +2378,6 @@ function promote()
 		return 1
 	fi
 
-	echo -n "Please type replication user [$REPL_USER] password: "
-	read REPL_PASSWD
 	write_out "Listing all replicas"
 	QUERY="select host from information_schema.processlist where user = '$REPL_USER'"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
@@ -2381,7 +2388,7 @@ function promote()
 		TMP_LOGIN_FILE=`mktemp ~/.mylogin.cnf.XXXXXX`
 		mv $LOGIN_FILE $TMP_LOGIN_FILE
 	fi
-	MYSQL_PWD=$REPL_PASSWD mysql -N -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USER -e "$QUERY" >$BUFF
+	MYSQL_PWD="$REPL_PASSWD" mysql -N -h $MASTER_HOST -P $MASTER_PORT -u $REPL_USER -e "$QUERY" >$BUFF
 	RC=$?
 	if [ $LOGIN_FILE_PRESENT -eq 1 ]; then
 		mv $TMP_LOGIN_FILE $LOGIN_FILE
@@ -2392,6 +2399,7 @@ function promote()
 	fi
 
 	REPLICA_LIST=`cat $BUFF`
+	
 	rm $BUFF
 	write_out "Enabling READ-ONLY mode in master"
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
@@ -2401,9 +2409,18 @@ function promote()
 	TARGET_CRED_OPT=`mount_target_credentials_opt` || return 1
 	mysql -h $MASTER_HOST -P $MASTER_PORT -e "set global super_read_only = on" || return 1
 
+	write_out "Finishing all sessions in master"
+	sessions_kill_all_master
+	sleep 2
+
+	write_out "Flushing tables in master"
+	mysqladmin -h $MASTER_HOST -P $MASTER_PORT flush-tables || return 1
+
+	write_out "Flushing binary logs in master"
+	mysqladmin -h $MASTER_HOST -P $MASTER_PORT flush-logs binary || return 1
+	sleep 2
+
 	write_out "Waiting for local replica to be 0 seconds behind master"
-	local SLEEP_TIME=$((MAX_DELAY + 2))
-	sleep $SLEEP_TIME
 	replica_wait_for_sync || return 1
 
 	write_out "Querying current binlog and position in local replica"
@@ -2429,8 +2446,7 @@ function promote()
 
 	write_out "Converting master to replica"
 	HOST_FIRST_NAME=`echo $HOSTNAME | cut -d . -f 1`
-	CHANGE_REPL_SRC_QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_log_file = '$BINLOG_NAME', source_log_pos = $BINLOG_POSITION, source_ssl = 1"
-	CHANGE_REPL_SRC_QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_ssl = 1"
+	CHANGE_REPL_SRC_QUERY="change replication source to source_host = '$HOST_FIRST_NAME', source_user = '$REPL_USER', source_password = '$REPL_PASSWD', source_auto_position = 0, source_log_file = '$BINLOG_NAME', source_log_pos = $BINLOG_POSITION, source_ssl = 1"
 	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$CHANGE_REPL_SRC_QUERY" || return 1
 	QUERY="start replica"
 	mysql $TARGET_CRED_OPT -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY" || return 1
