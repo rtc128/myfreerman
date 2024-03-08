@@ -4,8 +4,8 @@ function sessions_kill_all_master()
 	LIST=`mysql -h $MASTER_HOST -P $MASTER_PORT -e "$QUERY"` || return 1
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
 	for ID in $LIST; do
-		echo "kill connection $ID" >>$BUFF
+		echo "kill connection $ID;" >>$BUFF
 	done
-	mysql -f <$BUFF >/dev/null 2>&1
+	mysql -h $MASTER_HOST -P $MASTER_PORT -f <$BUFF >/dev/null 2>&1
 	rm $BUFF
 }
