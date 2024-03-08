@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.5.14
+Version:			 2.5.15
 Release:        1%{?dist}
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -38,6 +38,7 @@ install -m 0755 modules/flashback.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/fs.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/lock.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 install -m 0755 modules/replica.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
+install -m 0755 modules/sessions.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 
 %files
 /usr/bin/myfreerman
@@ -49,6 +50,11 @@ install -m 0755 modules/replica.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /var/log/myfreerman/
 
 %changelog
+
+* Fri Mar 8 2024 Rodrigo Tassinari 2.5.15
+- Fixes in PROMOTE command.
+- PROMOTE: allow setting password in env var
+- INIT REPLICA: allow setting password in env var
 
 * Tue Mar 5 2024 Rodrigo Tassinari 2.5.14
 - Fix in PROMOTE command
