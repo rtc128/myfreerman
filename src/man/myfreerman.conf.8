@@ -12,6 +12,10 @@ myfreerman reads its configuration from a section in Mysql server's my.cnf confi
 
 aux_basedir: Directory that the auxiliar instance will use to restore a specific schema/table. Its owner must be mysql.
 
+backup_apply_log: Determines if redo logs will be applied during backup. If not during backup, they need to be applied during restore.
+	DEFAULT: 1
+	POSSIBLE: 0, 1
+
 backup_dir: Directory where backups are going to be saved.
 
 backup_limit_memory: Max memory usage (Mb) in full backups.

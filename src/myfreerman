@@ -3,6 +3,25 @@
 set -e
 RELEASE=2.5.16
 
+function apply_log()
+{
+	if [ -n "$LOG_FILE" ]; then
+		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
+		write_out "===== STARTING MEB [APPLY LOG] - Log: $TMP_LOG ====="
+		mysqlbackup --backup-dir="$FULL_DIR" apply-log >$TMP_LOG 2>&1 
+		RETCODE=$?
+		cat $TMP_LOG >>"$LOG_FILE"
+		cat $TMP_LOG
+		rm $TMP_LOG
+		if [ $RETCODE -ne 0 ]; then
+			return 1
+		fi
+	else
+		write_out "===== STARTING MEB [APPLY LOG] ====="
+		mysqlbackup --backup-dir="$FULL_DIR" apply-log || return 1 
+	fi
+}
+
 function backup()
 {
 	local OPTIND l_opt
@@ -177,6 +196,7 @@ function backup_full()
 		help_backup_full
 		return 1
 	fi
+	read_backup_full_config || return 1
 	if ! [ -d "$BACKUP_DIR" ]; then
 		write_out "Cannot find directory '$BACKUP_DIR'"
 		return 1
@@ -199,10 +219,14 @@ function backup_full()
 		DISABLE_BUFFER_POOL_DUMP_OPT="--backup_innodb_buffer_pool_filename="
 	fi
 
+	ACTION=backup-and-apply-log
+	if [ $BACKUP_APPLY_LOG -eq 0 ]; then
+		ACTION=backup
+	fi
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
-		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --limit-memory=$BACKUP_LIMIT_MEMORY --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup-and-apply-log >$TMP_LOG 2>&1 
+		write_out "===== STARTING MEB [BACKUP] - Log: $TMP_LOG ====="
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --limit-memory=$BACKUP_LIMIT_MEMORY --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog $ACTION >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -212,8 +236,8 @@ function backup_full()
 			return 1
 		fi
 	else
-		write_out "===== STARTING MEB ====="
-		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --limit-memory=$BACKUP_LIMIT_MEMORY --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog backup-and-apply-log
+		write_out "===== STARTING MEB [BACKUP] ====="
+		mysqlbackup --defaults-file="$SERVER_CONFIG" --socket="$SERVER_SOCKET" $TARGET_CRED_OPT --limit-memory=$BACKUP_LIMIT_MEMORY --read-threads=$BACKUP_READ_THREADS --process-threads=$BACKUP_PROCESS_THREADS --write-threads=$BACKUP_WRITE_THREADS --backup-dir="${TMP_DIRECTORY}" $LIM_MEM_OPT $DISABLE_BUFFER_POOL_DUMP_OPT --skip-binlog $ACTION
 		RETCODE=$?
 		if [ $RETCODE -ne 0 ]; then
 			rm -fr "${TMP_DIRECTORY}"
@@ -2556,6 +2580,19 @@ function query_full_backup_age()
 	echo $RESULT
 }
 
+function read_backup_full_config()
+{
+	BACKUP_APPLY_LOG="`crudini --get \"$SERVER_CONFIG\" $INI_SECTION backup_apply_log 2>/dev/null`"
+	if [ -z "$BACKUP_APPLY_LOG" ]; then
+		BACKUP_APPLY_LOG=1
+	fi
+	if [ "$BACKUP_APPLY_LOG" != "0" -a "$BACKUP_APPLY_LOG" != "1" ]; then
+		echo "Configuration 'backup_apply_log' must be 0 or 1"
+		return 1
+	fi
+	return 0
+}
+
 function read_binlog()
 {
 	LOGSEQ=$1
@@ -3435,7 +3472,7 @@ function restore_aux_instance()
 
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
+		write_out "===== STARTING MEB [COPY BACK] - Log: $TMP_LOG ====="
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS >$TMP_LOG 2>&1
 		RETCODE=$?
 		cat $TMP_LOG
@@ -3445,7 +3482,7 @@ function restore_aux_instance()
 			return 1
 		fi
 	else
-		write_out "===== STARTING MEB ====="
+		write_out "===== STARTING MEB [COPY BACK] ====="
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file=$AUX_CONFIG --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${AUX_BINLOG_PREFIX}" --log-bin-index="${AUX_BINLOG_INDEX}" $RELAY_LOG_OPTS || return 1
 	fi
 
@@ -3532,6 +3569,7 @@ function restore_target_instance()
 	LIM_MEM_OPT=`mount_limit_memory_option`
 	FULL_DIR="${BASE_BACKUP_DIR}/${DIR}"
 
+	apply_log || return 1
 	if [ $USE_RCLONE -eq 1 ]; then
 		restore_target_instance_with_rclone || return 1
 	else
@@ -3583,7 +3621,7 @@ function restore_target_instance_with_meb()
 {
 	if [ -n "$LOG_FILE" ]; then
 		TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
-		write_out "===== STARTING MEB - Log: $TMP_LOG ====="
+		write_out "===== STARTING MEB [COPY BACK] - Log: $TMP_LOG ====="
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" >$TMP_LOG 2>&1 
 		RETCODE=$?
 		cat $TMP_LOG >>"$LOG_FILE"
@@ -3593,7 +3631,7 @@ function restore_target_instance_with_meb()
 			return 1
 		fi
 	else
-		write_out "===== STARTING MEB ====="
+		write_out "===== STARTING MEB [COPY BACK] ====="
 		mysqlbackup --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$SERVER_CONFIG" --read-threads=$RESTORE_READ_THREADS --write-threads=$RESTORE_WRITE_THREADS --backup-dir="$FULL_DIR" --skip-messages-logdir $LIM_MEM_OPT copy-back --log-bin="${BINLOG_PREFIX}" --log-bin-index="${BINLOG_INDEX}" --relay-log="$RELAY_LOG_PREFIX" --relay-log-index="$RELAY_LOG_INDEX" || return 1 
 	fi
 }
