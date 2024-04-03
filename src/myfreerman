@@ -3316,6 +3316,9 @@ function restore_database()
 	#secure files directory
 	SECURE_DIR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION secure_file_priv 2>/dev/null`"
 
+	#innodb temp tbs dir
+	INNODB_TEMP_TBS_DIR="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION innodb_temp_tablespaces_dir 2>/dev/null`"
+
 	#mysqld user
 	MYSQLD_USER="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION user 2>/dev/null`"
 
@@ -3564,6 +3567,15 @@ function restore_target_instance()
 		fi
 		chmod 700 "$SECURE_DIR" || return 1
 	fi
+
+	#innodb temp tbs dir
+	if [ -n "$INNODB_TEMP_TBS_DIR" ]; then
+		mkdir -p "$INNODB_TEMP_TBS_DIR" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$INNODB_TEMP_TBS_DIR" || return 1
+		fi
+	fi
+
 	check_empty_target_database || return 1
 	check_target_instance_config || return 1
 	LIM_MEM_OPT=`mount_limit_memory_option`
