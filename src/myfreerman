@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.18
+RELEASE=2.5.19
 
 function apply_log()
 {
@@ -3566,6 +3566,16 @@ function restore_target_instance()
 			chown $MYSQLD_USER "$SECURE_DIR" || return 1
 		fi
 		chmod 700 "$SECURE_DIR" || return 1
+	fi
+
+	#slow log
+	SLOW_QUERY_LOG_FILE="`crudini --get \"$SERVER_CONFIG\" $SERVER_INI_SECTION slow_query_log_file 2>/dev/null`"
+	if [ -n "$SLOW_QUERY_LOG_FILE" ]; then
+		DNAME="`dirname $SLOW_QUERY_LOG_FILE`" || return 1
+		mkdir -p "$DNAME" || return 1
+		if [ -n "$MYSQLD_USER" ]; then
+			chown $MYSQLD_USER "$DNAME" || return 1
+		fi
 	fi
 
 	#innodb temp tbs dir
