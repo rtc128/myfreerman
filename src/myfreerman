@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.19
+RELEASE=2.5.20
 
 function apply_log()
 {
@@ -567,7 +567,7 @@ function help_list_events
 function help_list_transactions
 {
 	echo "* List transactions from binary logs"
-	echo "   list transactions [ -h ] [ -S ] [ -d <schema> ] [ -m <min> ] [ -s <timestamp> ] [ -e <timestamp> ]"
+	echo "   list transactions [ -h ] [ -S ] [ -d <schema> ] [ -m <min> ] [ -r ] [ -s <timestamp> ] [ -e <timestamp> ]"
 	echo "      Output table contains the following colums: transaction start time, <total>, <table details>"
 	echo "         total: total number of rows affected by the transaction"
 	echo "         table details: list of each table affected, followed by number of INSERTs, UPDATEs and DELETEs on the table"
@@ -576,14 +576,16 @@ function help_list_transactions
 	echo "      -S: Show only summary"
 	echo "      -d: Set default schema to <schema>. Tables in this schema are not gonna be qualified, in generated list"
 	echo "      -m: List transactions executed in the last <min> minutes"
-	echo "         Cannot be used with -s or -e"
+	echo "         Cannot be used with -r, -s or -e"
 	echo "      -e: List transactions executed before <timestamp>"
    echo "     	   Require -s option"
-	echo "         Cannot be used with -m"
+	echo "         Cannot be used with -m or -r"
    echo "     	   <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
+	echo "      -r: For a replica, list transactios in current relay log (no time limit supported)"
+	echo "         Cannot be used with -s, -e or -m"
 	echo "      -s: List transactions executed after <timestamp>"
-	echo "         Cannot be used with -m"
+	echo "         Cannot be used with -m or -r"
    echo "     	   <timestmap>: hhmm | ddhhmm | MMddhhmm | yyyy-MM-dd_hh:mm:ss"
    echo "            hh: hour, mm: minute, dd: day, MM: month, yyyy: year, ss: second"
 }
@@ -754,21 +756,6 @@ function check_config_backup()
 		return 1
 	fi
 
-}
-
-function check_config_list()
-{
-	if [ -z "$LIST_REMOTE_HOST" ]; then
-		#BACKUP_DIR
-		if [ -z "$BACKUP_DIR" ]; then
-			echo "Configuration 'backup_dir' is required" >&2
-			return 1
-		fi
-		if [ ! -d "$BACKUP_DIR" ]; then
-			echo "'$BACKUP_DIR': no such directory" >&2
-			return 1
-		fi
-	fi
 }
 
 function check_depends()
@@ -2041,7 +2028,6 @@ function list()
 	fi
 	CMD=$1
 	shift
-	check_config_list || return 1
 	if [ -n "$LIST_REMOTE_HOST" ]; then
 		list_remote $CMD || return 1
 		return
@@ -2180,9 +2166,10 @@ function list_transactions()
 	#default end time is now
 	END_TIME=
 	DEFAULT_SCHEMA=
+	USE_RELAY=0
 	SUMMARY=0
 	local OPTIND l_opt
-	while getopts "Shd:m:s:e:" l_opt; do
+	while getopts "Shd:m:rs:e:" l_opt; do
 		case $l_opt in
 			S)
 				SUMMARY=1
@@ -2195,6 +2182,8 @@ function list_transactions()
 				DEFAULT_SCHEMA=$OPTARG;;
 			m)
 				MINUTES=$OPTARG;;
+			r)
+				USE_RELAY=1;;
 			s)
 				START_TIME=$OPTARG;;
 			e)
@@ -2210,6 +2199,8 @@ function list_transactions()
 		help_list_transactions
 		return 1
 	fi
+
+	DATADIR=`get_server_config datadir` || return 1
 	binlog_do_list_transactions || return 1
 }
 
