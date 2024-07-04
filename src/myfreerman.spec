@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.5.19
+Version:			 2.5.20
 Release:        1
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -50,6 +50,9 @@ install -m 0755 modules/sessions.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modules
 /var/log/myfreerman/
 
 %changelog
+
+* Thu Jul 4 2024 Rodrigo Tassinari 2.5.20
+- Support listing transactions in current relay log
 
 * Wed Apr 3 2024 Rodrigo Tassinari 2.5.19
 - When initializing a replica, create directory for slow log

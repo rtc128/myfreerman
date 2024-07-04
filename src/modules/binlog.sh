@@ -55,8 +55,12 @@ function binlog_do_list_transactions()
 	if [ $RETCODE -eq 1 ]; then
 		return 1
 	fi
-	_list_backup_transactions || return 1
-	_list_local_transactions || return 1
+	if [ $USE_RELAY -eq 1 ]; then
+		_list_relay_transactions || return 1
+	else
+		_list_backup_transactions || return 1
+		_list_local_transactions || return 1
+	fi
 }
 
 function _binlog_find_first_binlog_backup_by_date()
@@ -277,6 +281,29 @@ function _list_local_transactions()
 	done
 }
 
+function _list_relay_transactions()
+{
+	#get current relay
+	ERR_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	OUT_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT_NOPWD -e 'show replica status\G' >$OUT_BUFF 2>$ERR_BUFF
+	RC=$?
+	write_file_out $ERR_BUFF
+	rm $ERR_BUFF
+	[ $RC -eq 0 ] || { rm $OUT_BUFF; return 1; }
+	LOG_FILE=`grep -wi relay_log_file $OUT_BUFF | cut -d : -f 2 | tr -d ' '`
+	rm $OUT_BUFF
+	[ -n "$LOG_FILE" ] || { write_out "No relay log in use"; return 0; }
+	RELAY_LOG_CONF=`mysql -N --socket="$SERVER_SOCKET" $TARGET_CRED_OPT_NOPWD -e 'select @@relay_log'`
+
+	RELAY_LOG_DIR="`dirname $RELAY_LOG_CONF`"
+	if [ "$RELAY_LOG_DIR" == "." ]; then
+		RELAY_LOG_DIR="$DATADIR"
+	fi
+	FULL_NAME="$RELAY_LOG_DIR/$LOG_FILE"
+	_list_one_binlog_transactions "${FULL_NAME}" || return 1
+}
+
 function _list_one_binlog_events()
 {
 	FULL_PATH="$1"
@@ -364,7 +391,15 @@ function _list_one_binlog_transactions()
 	UPD_TAB=()
 	DEL_TAB=()
 
-	mysqlbinlog --defaults-file="$SERVER_CONFIG" -v --start-datetime="$START_TIME" --stop-datetime="$END_TIME" --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
+	START_TIME_OPT=
+	if [  -n "$START_TIME" ]; then
+		START_TIME_OPT="--start-datetime='$START_TIME'"
+	fi
+	STOP_TIME_OPT=
+	if [  -n "$STOP_TIME" ]; then
+		STOP_TIME_OPT="--stop-datetime='$END_TIME'"
+	fi
+	mysqlbinlog --defaults-file="$SERVER_CONFIG" -v $START_TIME_OPT $STOP_TIME_OPT --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
 
 	#for each line
 	while IFS= read -r LINE; do
@@ -638,9 +673,25 @@ function _list_one_binlog_events_detailed_th()
 
 function _list_transactions_validate_params()
 {
+	#if using relay, cannot choose minutes, start time or end time
+	if [ $USE_RELAY -eq 1 ]; then
+		if [ -n "$START_TIME" ]; then
+			write_out "When using relay log, start time can't be informed"
+			return 1
+		fi
+		if [ -n "$END_TIME" ]; then
+			write_out "When using relay log, end time can't be informed"
+			return 1
+		fi
+		if [ -n "$MINUTES" ]; then
+			write_out "When using relay log, minutes can't be informed"
+			return 1
+		fi
+	fi
+
 	#one of START TIME or MINUTES must be informed
-	if [ -z "$START_TIME" -a -z "$MINUTES" ]; then
-		write_out "At least 'start time' or 'minutes' must be informed"
+	if [ $USE_RELAY -eq 0 -a -z "$START_TIME" -a -z "$MINUTES" ]; then
+		write_out "When not using relay log, at least 'start time' or 'minutes' must be informed"
 		return 1
 	fi
 
