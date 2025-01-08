@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.20
+RELEASE=2.5.21
 
 function apply_log()
 {
@@ -318,6 +318,7 @@ function do_apply_binlog()
 		crudini --del "$FPATH" recovery requested_timestamp 2>/dev/null
 		crudini --del "$FPATH" recovery validated 2>/dev/null
 	done
+	NEXT_LOGSEQ=$LOGSEQ
 	rm $TMP_SQL $ERR_LOG
 }
 
@@ -1990,7 +1991,9 @@ function init_replica()
 		mysql_stop || return 1
 		return 1
 	fi
-	CMD="change replication source to source_host='$MASTER_HOST', source_port=$MASTER_PORT, source_auto_position=1, source_ssl=1, source_user='$REPL_USERNAME', source_password='$REPL_PASSWD'";
+	local LONG_LOGSEQ=`seq -f "%06g" $NEXT_LOGSEQ $NEXT_LOGSEQ`
+	local BINLOG=binlog.$LONG_LOGSEQ
+	CMD="change replication source to source_host='$MASTER_HOST', source_port=$MASTER_PORT, source_auto_position=0, source_log_file='$BINLOG', source_log_pos=1, source_ssl=1, source_user='$REPL_USERNAME', source_password='$REPL_PASSWD'";
 	if ! mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$CMD"; then
 		mysql_stop || return 1
 		return 1
