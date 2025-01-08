@@ -7,7 +7,7 @@ function run()
 	TAG=v${REL}
 	MSG="Version $REL"
 	git commit -a -m "$MSG"
-	git tag $TAG || return 1
+	git tag $TAG
 	git push || return 1
 	git push --tags || return 1
 	publish-rpms || return 1
