@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.21
+RELEASE=2.5.22
 
 function apply_log()
 {
@@ -1870,7 +1870,6 @@ function init_database()
 	fi
 	LINE=`grep -w password "$LOG_ERROR" | tail -n 1`
 	PASSWORD=`echo ${LINE##* }`
-	write_out "Temp password: $PASSWORD"
 
 	INST_TYPE=init
 	mysql_start || return 1
