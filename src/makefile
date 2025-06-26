@@ -9,7 +9,7 @@ rpm:
 	tar -C /tmp -c -z -f /tmp/myfreerman.tar.gz myfreerman-$(R)
 	mv /tmp/myfreerman.tar.gz ~/rpmbuild/SOURCES
 	cp myfreerman.spec ~/rpmbuild/SPECS
-	rpmbuild -bb ~/rpmbuild/SPECS/myfreerman.spec
+	rpmbuild --define "_target_os linux" -bb ~/rpmbuild/SPECS/myfreerman.spec
 	mkdir -p ~/rpm
 	rm -fr ~/rpm/*
 	mv ~/rpmbuild/RPMS/noarch/*.rpm ~/rpm
