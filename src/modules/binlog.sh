@@ -63,6 +63,33 @@ function binlog_do_list_transactions()
 	fi
 }
 
+function _binlog_expand_timestamp_txn()
+{
+	TS=$1
+	if [ ${#TS} -eq 4 ]; then
+		H=${TS:0:2}
+		M=${TS:2:2}
+		date +%Y%m%d${H}${M}00 || return 1
+		return
+	fi
+	if [ ${#TS} -eq 6 ]; then
+		D=${TS:0:2}
+		H=${TS:2:2}
+		M=${TS:4:2}
+		date +%Y%m${D}${H}${M}00 || return 1
+		return
+	fi
+	if [ ${#TS} -eq 8 ]; then
+		MON=${TS:0:2}
+		D=${TS:2:2}
+		H=${TS:4:2}
+		MIN=${TS:6:2}
+		date +%Y${MON}${D}${H}${MIN}00 || return 1
+		return
+	fi
+	echo $TS
+}
+
 function _binlog_find_first_binlog_backup_by_date()
 {
 	local MIN_DATE="$1"
@@ -207,16 +234,14 @@ function _list_events_validate_params()
 			write_out "When 'end time' is informed, 'start time' must also be informed"
 			return 1
 		fi
-		END_TIME=`expand_timestamp $END_TIME`
-		END_TIME="${END_TIME/_/ }"
+		END_TIME=`_binlog_expand_timestamp_txn $END_TIME`
 		[ -n "$END_TIME" ] || return 1
 	fi
 
 	#if start timestamp is informed (and not minutes), expand it
 	if [ -n "$START_TIME" -a -z "$MINUTES" ]; then
-		START_TIME=`expand_timestamp $START_TIME`
+		START_TIME=`_binlog_expand_timestamp_txn $START_TIME`
 		[ -n "$START_TIME" ] || return 1
-		START_TIME="${START_TIME/_/ }"
 	fi
 }
 
@@ -393,11 +418,11 @@ function _list_one_binlog_transactions()
 
 	START_TIME_OPT=
 	if [  -n "$START_TIME" ]; then
-		START_TIME_OPT="--start-datetime='$START_TIME'"
+		START_TIME_OPT=--start-datetime=${START_TIME}
 	fi
 	STOP_TIME_OPT=
 	if [  -n "$STOP_TIME" ]; then
-		STOP_TIME_OPT="--stop-datetime='$END_TIME'"
+		STOP_TIME_OPT=--stop-datetime=${END_TIME}
 	fi
 	mysqlbinlog --defaults-file="$SERVER_CONFIG" -v $START_TIME_OPT $STOP_TIME_OPT --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
 
@@ -719,16 +744,14 @@ function _list_transactions_validate_params()
 			write_out "When 'end time' is informed, 'start time' must also be informed"
 			return 1
 		fi
-		END_TIME=`expand_timestamp $END_TIME`
-		END_TIME="${END_TIME/_/ }"
+		END_TIME=`_binlog_expand_timestamp_txn $END_TIME`
 		[ -n "$END_TIME" ] || return 1
 	fi
 
 	#if start timestamp is informed (and not minutes), expand it
 	if [ -n "$START_TIME" -a -z "$MINUTES" ]; then
-		START_TIME=`expand_timestamp $START_TIME`
+		START_TIME=`_binlog_expand_timestamp_txn $START_TIME`
 		[ -n "$START_TIME" ] || return 1
-		START_TIME="${START_TIME/_/ }"
 	fi
 	if [ -z "$END_TIME" ]; then
 		END_TIME=`date +"%F %T"`
