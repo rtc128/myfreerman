@@ -3,9 +3,16 @@
 function check_create_new_table()
 {
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
-	write_out "Creating new table"
+
 	CMD="create table $FQ_NEW_TABLE_NAME as select * from $FQ_TABLE_NAME limit 0;"
-	mysql_send_command "$CMD"
+	if [ -n "$SQL_OUT_SCRIPT" ]; then
+		write_out "Creating new table (addind to output script)"
+		echo "$CMD" >> "$SQL_OUT_SCRIPT"
+	else
+		write_out "Creating new table"
+		mysql_send_command "$CMD"
+	fi
+
 }
 
 function check_del_col_count()
@@ -44,9 +51,15 @@ function check_populate_new_table()
 {
 	#if dest is another table, copy official table data to dest
 	[ "$TABLE_NAME" != "$NEW_TABLE_NAME" ] || return 0
-	write_out "Copying table contents"
+
 	CMD="insert into $FQ_NEW_TABLE_NAME select * from $FQ_TABLE_NAME;"
-	mysql_send_command "$CMD"
+	if [ -n "$SQL_OUT_SCRIPT" ]; then
+		write_out "Copying table contents (adding to script)"
+		echo "$CMD" >> "$SQL_OUT_SCRIPT"
+	else
+		write_out "Copying table contents"
+		mysql_send_command "$CMD" || return 1
+	fi
 
 	write_out "Unlocking tables"
 	CMD="unlock tables;"
@@ -62,6 +75,10 @@ function initialize()
 {
 	write_out "Connecting to mysql"
 	exec 5> >(mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT)
+
+	if [ -n "$SQL_OUT_SCRIPT" ]; then
+		return 0
+	fi
 
 	write_out "Starting transaction"
 	CMD="start transaction;"
@@ -96,17 +113,25 @@ function decode_blob_value()
 
 function exec_sqls()
 {
-	write_out "Running flashback script"
-	for F in `ls -r $SQL_DIR`; do
-		FF=$SQL_DIR/$F
-		#get number of lines, to calculate sleep time
-		COUNT=`wc -l $FF | awk '{print $1;}'`
-		SLEEP_TIME=`echo $COUNT \* 0.1 | bc`
-		cat $FF >&5 || return 1
-		sleep $SLEEP_TIME
-	done
-	CMD="commit;"
-	mysql_send_command "$CMD"
+	if [ -n "$SQL_OUT_SCRIPT" ]; then
+		for F in `ls -r $SQL_DIR`; do
+			FF=$SQL_DIR/$F
+			cat $FF >>"$SQL_OUT_SCRIPT"
+		done
+		write_out "SQL script file: $SQL_OUT_SCRIPT"
+	else
+		write_out "Running flashback script"
+		for F in `ls -r $SQL_DIR`; do
+			FF=$SQL_DIR/$F
+			#get number of lines, to calculate sleep time
+			COUNT=`wc -l $FF | awk '{print $1;}'`
+			SLEEP_TIME=`echo $COUNT \* 0.1 | bc`
+			cat $FF >&5 || return 1
+			sleep $SLEEP_TIME
+		done
+		CMD="commit;"
+		mysql_send_command "$CMD"
+	fi
 }
 
 function get_first_binlog()
@@ -438,10 +463,12 @@ function revert_sql_cmds()
 	grep -ni "$STR" $SQL | cut -d : -f 1 >$LINE_LIST
 	LINES_LINE_COUNT=`wc -l $LINE_LIST | awk '{ print $1; }'`
 	SQL_LINE_COUNT=`wc -l $SQL | cut -d \  -f 1`
+	local PID_LIST=
 	for I in `seq 1 $PROCESS_THREADS`; do
 		revert_sql_cmds_th $I &
+		PID_LIST="$PID_LIST $!"
 	done
-	wait
+	wait $PID_LIST
 	rm $LINE_LIST
 	[ -f $SQL ] || return 1
 }
@@ -451,6 +478,7 @@ function revert_sql_cmds_th()
 	THREAD_ID=$1
 	EVENT=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	EVENT_NUM=$THREAD_ID
+	sleep 1
 	while [ $EVENT_NUM -le $LINES_LINE_COUNT ]; do
 		START_LINE=`head -n $EVENT_NUM $LINE_LIST | tail -n 1`
 		parse_one_event || return 1
@@ -470,14 +498,25 @@ function revert_sql_cmds_th()
 		EVENT_NUM=$((EVENT_NUM+PROCESS_THREADS))
 	done
 	rm $EVENT
+	return 0
 }
 
 function flashback_run()
 {
+	SQL_OUT_SCRIPT=
+	if replica_check_is_replica; then
+		write_out "Instance is a replica - writing flashback script to file"
+		SQL_OUT_SCRIPT=`mktemp /tmp/myfreerman.flashback.XXXXXX.sql`
+	fi
+
 	initialize || return 1
 	get_pk || return 1
 	check_create_new_table || { rm $PK_LIST; return 1; }
-	lock_tables || { rm $PK_LIST; return 1; }
+
+	if [ -z "$SQL_OUT_SCRIPT" ]; then
+		lock_tables || { rm $PK_LIST; return 1; }
+	fi
+	
 	CUR_BINLOG_FULL=
 	#if dest is another table, get current binlog position
 	if [ "$TABLE_NAME" != "$NEW_TABLE_NAME" ]; then
