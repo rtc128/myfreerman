@@ -2,8 +2,6 @@
 
 Version: 2
 
-Release: 2.5.13
-
 Summary: Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
 
@@ -13,7 +11,7 @@ License: GPL
 
 Source0: mytjrsrman-1.tar.gz
 
-Requires: crudini >= 0.3
+Requires: crudini, rclone
 
 
 ## Description:
