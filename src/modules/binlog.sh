@@ -417,11 +417,11 @@ function _list_one_binlog_transactions()
 	DEL_TAB=()
 
 	START_TIME_OPT=
-	if [  -n "$START_TIME" ]; then
+	if [ -n "$START_TIME" ]; then
 		START_TIME_OPT=--start-datetime=${START_TIME}
 	fi
 	STOP_TIME_OPT=
-	if [  -n "$STOP_TIME" ]; then
+	if [ -n "$END_TIME" ]; then
 		STOP_TIME_OPT=--stop-datetime=${END_TIME}
 	fi
 	mysqlbinlog --defaults-file="$SERVER_CONFIG" -v $START_TIME_OPT $STOP_TIME_OPT --result-file=$SQL "$FULL_PATH" || { rm $SQL; return 1; }
