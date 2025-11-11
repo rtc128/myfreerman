@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.24
+RELEASE=2.5.27
 
 function apply_log()
 {
@@ -219,6 +219,7 @@ function backup_full()
 		DISABLE_BUFFER_POOL_DUMP_OPT="--backup_innodb_buffer_pool_filename="
 	fi
 
+	check_server_version || return 1
 	ACTION=backup-and-apply-log
 	if [ $BACKUP_APPLY_LOG -eq 0 ]; then
 		ACTION=backup
@@ -821,6 +822,33 @@ function check_purge_binlogs()
 		return
 	fi
 	purge_binlogs $LIMIT_LOG || return 1
+}
+
+function check_server_version()
+{
+	local OUT_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	local ERR_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
+	local CRED_OPT=`mount_target_credentials_opt` || return 1
+	mysql -N --socket="$SERVER_SOCKET" $CRED_OPT -e 'select @@version' >$OUT_BUFF 2>$ERR_BUFF
+	local RC=$?
+	write_file_out $ERR_BUFF
+	rm $ERR_BUFF
+	[ $RC -eq 0 ] || { rm $OUT_BUFF; return 1; }
+	local VERSION=`cat $OUT_BUFF`
+	rm $OUT_BUFF
+	#major must be 8
+	local MAJOR=`echo $VERSION | cut -d . -f 1`
+	[ $MAJOR -eq 8 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
+
+	#minor must be 0 or 4
+	local MINOR=`echo $VERSION | cut -d . -f 2`
+	[ $MINOR -eq 0 -o $MINOR -eq 4 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
+
+	#if minor is 0, release must be at least 26
+	if [ $MINOR -eq 0 ]; then
+		local RELEASE=`echo $VERSION | cut -d . -f 3 | cut -d - -f 1`
+		[ $RELEASE -ge 26 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
+	fi
 }
 
 function check_target_instance_config()
@@ -3979,10 +4007,17 @@ function write_err()
 function write_file_out()
 {
 	local OUT_F="$1"
-	cat "$OUT_F"
-	if [ -n "$LOG_FILE" ]; then
-		cat "$OUT_F" >>"$LOG_FILE"
+	local SIZE=`stat -c %s "$OUT_F"`
+	if [ $SIZE -eq 0 ]; then
+		return 0
 	fi
+	local TS=`date +"%d %H:%M:%S"`
+	local MSG="[$TS]\n`cat \"$OUT_F\" | sed -e 's/^/\t/'`"
+	echo -e "$MSG"
+	if [ -n "$LOG_FILE" ]; then
+		echo -e "$MSG" >>"$LOG_FILE"
+	fi
+	return 0
 }
 
 function write_out()
