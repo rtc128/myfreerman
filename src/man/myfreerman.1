@@ -6,11 +6,6 @@
 
 myfreerman \- administer mysql backups
 
-.SH INSTALLATION
-
-myfreerman registers backup operations in target database.
-After installing package, script /usr/share/myfreerman/sql/backup.sql must be executed.
-
 .SH SYNOPSIS
 
 myfreerman -h
@@ -100,6 +95,12 @@ It adds support for:
 - Table flashbacks
 
 It cannot be used remotely, because binary logs are saved using OS commands.
+
+Supported MySQL server versions:
+
+- 8.0: >=8.0.26
+
+- 8.4: all
 
 .SH CONFIGURATION
 
