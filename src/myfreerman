@@ -119,6 +119,8 @@ function backup_binlog()
 	#create binlog backup dir
 	mkdir -p "$BINLOG_BACKUP_DIR" || return 1
 
+	check_server_version || return 1
+
 	#flush logs
 	write_out "Flushing binary logs"
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
@@ -837,15 +839,15 @@ function check_server_version()
 	local VERSION=`cat $OUT_BUFF`
 	rm $OUT_BUFF
 	#major must be 8
-	local MAJOR=`echo $VERSION | cut -d . -f 1`
-	[ $MAJOR -eq 8 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
+	VERSION_MAJOR=`echo $VERSION | cut -d . -f 1`
+	[ $VERSION_MAJOR -eq 8 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
 
 	#minor must be 0 or 4
-	local MINOR=`echo $VERSION | cut -d . -f 2`
-	[ $MINOR -eq 0 -o $MINOR -eq 4 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
+	VERSION_MINOR=`echo $VERSION | cut -d . -f 2`
+	[ $VERSION_MINOR -eq 0 -o $VERSION_MINOR -eq 4 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
 
 	#if minor is 0, release must be at least 26
-	if [ $MINOR -eq 0 ]; then
+	if [ $VERSION_MINOR -eq 0 ]; then
 		local RELEASE=`echo $VERSION | cut -d . -f 3 | cut -d - -f 1`
 		[ $RELEASE -ge 26 ] || { write_out "Unsupported server version ${VERSION}. Please check man page for details."; return 1; }
 	fi
@@ -1458,9 +1460,15 @@ function get_oldest_full_backup()
 
 function get_current_master_binlog_sequence()
 {
+	local QUERY="show binary log status"
+	#for 8.0, it's SHOW MASTER STATUS
+	if [ $VERSION_MINOR -eq 0 ]; then
+		QUERY="show master status"
+	fi
+
 	BUFF=`mktemp /tmp/myfreerman.XXXXXX`
 	ERR=`mktemp /tmp/myfreerman.XXXXXX`
-	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e 'show master status\G' | grep -vwi warning >$BUFF 2>$ERR
+	mysql --socket="$SERVER_SOCKET" $TARGET_CRED_OPT -e "$QUERY\G" | grep -vwi warning >$BUFF 2>$ERR
 	RC=$?
 	write_file_out $ERR
 	rm $ERR
