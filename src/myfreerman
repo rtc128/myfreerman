@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.30
+RELEASE=2.5.31
 
 function apply_log()
 {
@@ -947,8 +947,10 @@ function check_target_instance_config()
 	TMP_LOG=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	TMP_CONF=`mktemp /tmp/myfreerman.XXXXXX` || return 1
 	grep -v "^audit" "$SERVER_CONFIG" >$TMP_CONF || return 1
-	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --initialize >>"$TMP_LOG" 2>&1; then
-		write_out "Cannot check target instance configuration. Check server output in '$TMP_LOG' and logs in '$LOG_ERROR'."
+	if ! mysqld --defaults-group-suffix=$MYSQL_DEFAULT_GROUP_SUFFIX --defaults-file="$TMP_CONF" --initialize >"$TMP_LOG" 2>&1; then
+		write_out "Cannot check target instance configuration."
+		write_file_out $TMP_LOG
+		write_out "Please check error log '$LOG_ERROR'."
 		drop_target_database
 		rm $TMP_LOG $TMP_CONF
 		return 1
@@ -3575,16 +3577,15 @@ function restore_target_instance()
 	if [ -n "$REDODIR" ]; then
 		if [ "${REDODIR:0:1}" != "/" ]; then
 			REDODIR="$DATADIR/$REDODIR"
+			mkdir -p "$REDODIR" || return 1
 		fi
-		mkdir -p "$REDODIR" || return 1
-		#if ls -d "$REDODIR"/* >/dev/null 2>&1; then
-			#write_out "Redo directory [$REDODIR] must be empty"
-			#return 1
-		#fi
 		if [ -n "$MYSQLD_USER" ]; then
 			chown $MYSQLD_USER "$REDODIR" || return 1
 		fi
+	else
+		REDODIR="$DATADIR/#innodb_redo"
 	fi
+
 	if [ -n "$BINLOG_DIR" ]; then
 		mkdir -p "$BINLOG_DIR" || return 1
 		if [ -n "$MYSQLD_USER" ]; then
