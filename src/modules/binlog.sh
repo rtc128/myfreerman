@@ -308,6 +308,7 @@ function _list_local_transactions()
 
 function _list_relay_transactions()
 {
+	END_TIME=
 	#get current relay
 	ERR_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
 	OUT_BUFF=`mktemp /tmp/myfreerman.XXXXXX`
