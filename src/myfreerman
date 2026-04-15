@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.32
+RELEASE=2.5.33
 
 function apply_log()
 {
@@ -199,6 +199,8 @@ function backup_full()
 		return 1
 	fi
 	read_backup_full_config || return 1
+	check_config_backup_full || return 1
+
 	if ! [ -d "$BACKUP_DIR" ]; then
 		write_out "Cannot find directory '$BACKUP_DIR'"
 		return 1
@@ -686,12 +688,6 @@ function check_config()
 		return 1
 	fi
 
-	#backup limit memory - must be 20 to 2048
-	if [ $BACKUP_LIMIT_MEMORY -lt 20 -o $BACKUP_LIMIT_MEMORY -gt 2048 ]; then
-		write_out "Configuration 'backup_limit_memory' must be between 20 and 2048"
-		return 1
-	fi
-
 	#backup process threads - must be 1 to 15
 	if [ $BACKUP_PROCESS_THREADS -lt 1 -o $BACKUP_PROCESS_THREADS -gt 15 ]; then
 		write_out "Configuration 'backup_process_threads' must be between 1 and 30"
@@ -757,6 +753,15 @@ function check_config_backup()
 	fi
 	if [ ! -d "$BACKUP_DIR" ]; then
 		echo "'$BACKUP_DIR': no such directory" >&2
+		return 1
+	fi
+}
+
+function check_config_backup_full()
+{
+	#backup limit memory - must be between 20 and 921600
+	if [ $BACKUP_LIMIT_MEMORY -lt 20 -o $BACKUP_LIMIT_MEMORY -gt 921600 ]; then
+		write_out "Configuration 'backup_limit_memory' must be between 20 and 921600"
 		return 1
 	fi
 
