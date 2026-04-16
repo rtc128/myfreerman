@@ -29,11 +29,11 @@ backup_process_threads: Number of threads that will apply redo logs in full back
 
 backup_read_threads: Number of threads that will read data in full backups.
    DEFAULT: 1.
-	MAX: 15.
+	MAX: 150.
 
 backup_write_threads: Number of threads that will write backup in full backups.
    DEFAULT: 1.
-	MAX: 15.
+	MAX: 150.
 
 db_password: Database password - optional - mysql_config_editor can be used.
 
@@ -58,11 +58,11 @@ read_only: 1 to avoid making backups. Useful for safety when an instance is alwa
 
 restore_read_threads: Number of threads that will read backup in restore operations.
    DEFAULT: 1.
-	MAX: 15.
+	MAX: 150.
 
 restore_write_threads: Number of threads that will write data in restore operations.
    DEFAULT: 1.
-	MAX: 15.
+	MAX: 150.
 
 retention_period: Backup retention period (days).
 

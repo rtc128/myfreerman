@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-RELEASE=2.5.33
+RELEASE=2.5.32
 
 function apply_log()
 {
@@ -700,21 +700,9 @@ function check_config()
 		return 1
 	fi
 
-	#backup read threads
-	if [ $BACKUP_READ_THREADS -lt 1 -o $BACKUP_READ_THREADS -gt $MAX_READ_THREADS ]; then
-		echo "Configuration 'backup_read_threads' must be between 1 and $MAX_READ_THREADS" >&2
-		return 1
-	fi
-
 	#restore read threads
 	if [ $RESTORE_READ_THREADS -lt 1 -o $RESTORE_READ_THREADS -gt $MAX_READ_THREADS ]; then
 		echo "Configuration 'restore_read_threads' must be between 1 and $MAX_READ_THREADS" >&2
-		return 1
-	fi
-
-	#backup write threads
-	if [ $BACKUP_WRITE_THREADS -lt 1 -o $BACKUP_WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
-		echo "Configuration 'backup_write_threads' must be between 1 and $MAX_WRITE_THREADS" >&2
 		return 1
 	fi
 
@@ -765,6 +753,17 @@ function check_config_backup_full()
 		return 1
 	fi
 
+	#backup read threads
+	if [ $BACKUP_READ_THREADS -lt 1 -o $BACKUP_READ_THREADS -gt $MAX_READ_THREADS ]; then
+		echo "Configuration 'backup_read_threads' must be between 1 and $MAX_READ_THREADS" >&2
+		return 1
+	fi
+
+	#backup write threads
+	if [ $BACKUP_WRITE_THREADS -lt 1 -o $BACKUP_WRITE_THREADS -gt $MAX_WRITE_THREADS ]; then
+		echo "Configuration 'backup_write_threads' must be between 1 and $MAX_WRITE_THREADS" >&2
+		return 1
+	fi
 }
 
 function check_depends()
@@ -4051,8 +4050,8 @@ fi
 NOW_EPOCH=`date +%s`
 DATE_VAL=`date +%Y-%m-%d`
 TIME_VAL=`date +%H:%M:%S`
-MAX_READ_THREADS=15
-MAX_WRITE_THREADS=15
+MAX_READ_THREADS=150
+MAX_WRITE_THREADS=150
 READ_ONLY=0
 LOG_FILE=
 check_depends || exit -1
