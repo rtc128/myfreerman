@@ -1,5 +1,5 @@
 Name:           myfreerman
-Version:			 2.5.33
+Version:			 2.5.34
 Release:        1
 Summary:        Wrapper for MySQL Enterprise Backup that adds binlog compression and PITR
 
@@ -50,6 +50,9 @@ install -m 0755 src/modules/sessions.sh $RPM_BUILD_ROOT/usr/lib/myfreerman/modul
 /var/log/myfreerman/
 
 %changelog
+
+* Thu Apr 16 2026 Rodrigo Tassinari 2.5.34
+- Fix in max RW threads
 
 * Wed Apr 15 2026 Rodrigo Tassinari 2.5.33
 - Changed full backup memory limit to a greater value
