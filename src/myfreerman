@@ -723,13 +723,7 @@ function check_config()
 		echo "Configuration 'use_rclone' must be 0 or 1" >&2
 		return 1
 	fi
-	#if enabled, rclone must be found
-	if [ $USE_RCLONE -eq 1 ]; then
-		if ! which rclone >/dev/null 2>&1; then
-			write_out "RCLONE not found. If you do not plan to use it, please disable it in config file."
-			return 1
-		fi
-	fi
+
 }
 
 function check_config_backup()
@@ -766,11 +760,22 @@ function check_config_backup_full()
 	fi
 }
 
+function check_config_restore()
+{
+	#if enabled, rclone must be found
+	if [ $USE_RCLONE -eq 1 ]; then
+		if ! which rclone >/dev/null 2>&1; then
+			write_out "Can't find 'rclone' executable."
+			return 1
+		fi
+	fi
+}
+
 function check_depends()
 {
 	#crudini
-	if ! rpm -q crudini >/dev/null 2>&1; then
-		write_out "Cannot find package 'crudini'"
+	if ! which crudini >/dev/null 2>&1; then
+		write_out "Cannot find 'crudini' executable"
 		return 1
 	fi
 }
@@ -3164,6 +3169,7 @@ function restore()
 		return 1
 	fi
 
+	check_config_restore || return 1
 	BINLOG_BACKUP_DIR="$BACKUP_DIR/binlog"
 	BASE_BACKUP_DIR="$BACKUP_DIR/base"
 	TMP_BACKUP_DIR="$BACKUP_DIR/tmp"
